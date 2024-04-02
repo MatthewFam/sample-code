@@ -1,6 +1,7 @@
-# Sample Code
+Sample Code
+==
 
-## Matthew Fam
+### *Matthew Fam*
 
 Miscellaneous code samples from past projects (2019-2024).
 
