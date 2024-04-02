@@ -1,0 +1,243 @@
+Automated file manipulation, data extraction, wrangling, and aggregation (see at matthewfam.com/code/Hof-Lab-Data-Analysis).
+Written 2020.
+---
+title: "Hof Lab Data Wrangling & Analysis - Matthew Fam"
+code_folding: hide
+df_print: paged
+output:
+  html_document:
+    df_print: paged
+html_notebook: default
+editor_options: null
+pdf_document: default
+chunk_output_type: inline
+word_document: default
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval=FALSE)
+```
+**Note:** This work was produced by Matthew Fam for one research project at the Hof Lab (Icahn School of Medicine at Mount Sinai). Anyone is welcome to use all or part of the following code (or the products thereof) outside of that context given proper citation/attribution/authorship as discussed and arranged with Matthew Fam (Email: contact@matthewfam.com).
+
+For a written explanation of the code, refer to <a href="https://docs.google.com/document/d/1Uo2xKL55ZENffeltOoQ-2KEw-33wBlgpfRMtBMro-uE/edit?usp=sharing">this guide</a>.
+
+## **Data Set-Up** | Retrieval and Formatting
+
+```{r, warning = FALSE, message = FALSE}
+library(readxl)
+library(writexl)
+
+#THE FOLLOWING CODE APPLIES TO A DIRECTORY WHERE THE APPROPRIATE DATA FILES ARE WITHIN A MASTER FOLDER; OTHER DIRECTORY STRUCTURES REQUIRE MINOR ADJUSTMENTS TO THE CODE
+
+files <- list.files(path = "~/Box/filepath/Matthew Fam Code and Output/Shank3_rat_NL360_Excel_Final/", full.names = T)
+  #creates lists of the paths to each file within the master data folder>
+filenames <- list.files(path = "~/Box/filepath/Matthew Fam Code and Output/Shank3_rat_NL360_Excel_Final/", full.names = F)
+names(files) <- filenames
+  #names the rows of this list with the file name itslef instead of the source folder name or the whole file path
+
+clean <- function(x)
+{
+    x <- x[-c((nrow(x)-1):nrow(x)),]
+    `Dendrite diameter at anchor (µm)` <- rep(NA, nrow(x))
+    if (ncol(x)<27) {x <- cbind(x, `Dendrite diameter at anchor (µm)`)} else {x}
+}
+  #defines a custom function that removes the last 2 rows in each excel file (because these only have the calculated average spine length in the "Spine Details-Automatic" Sheet) and evens out the number of columns in each spreadsheet (some were missing "Dendrite Diameter at Anchor")
+
+classify <- function(df, x, splits, ...) #where df is your main data sheet (data frame), x is the data you wish to parse, and splits are the delimiters
+{
+    for (split in splits)
+    {
+        x <- unlist(strsplit(x, split, ...))
+    }
+    cl <- x[!x == ""] # Remove empty values
+    cl <- data.frame(matrix(cl, ncol = 7, byrow = T))
+    abcl <- as.data.frame(grepl("_a", df$`File Name`))
+    abcl <- ifelse(abcl == "TRUE", "a", "b" )
+    cl <- cbind(cl[,-c(1,6,7)], abcl, cl[,6])
+    colnames(cl) <- c("Rat", "Brain Region", "Section", "Cell", "Apical or Basal", "Apical/Basal Number")
+    df <- cbind(cl, df)
+    df$Rat <- as.numeric(as.character(df$Rat))
+    df$Section <- as.numeric(as.character(df$Section))
+    df$Cell <- as.numeric(as.character(df$Cell))
+    df$`Apical/Basal Number` <- as.numeric(as.character(df$`Apical/Basal Number`))
+    df
+}
+ #defines a custom function meant to parse the file name associated with the data of each row to parse the classifiers and output a new table with the appropriate classifiers
+
+readandprep <- function (x, clean = FALSE) #where x is the specific excel sheet (number of said sheet) for which data will be read and   prepared; clean, which specifies whether the sheet includes 2 rows that need to be removed in each file (as is the case in the "Spine Details-Automatic" sheet [sheet 3]), is set to "FALSE" by default, but may be set to "TRUE" when appropriate
+{
+    df <- sapply(files, read_excel, sheet = x, simplify = FALSE)
+      #uses the previously retrieved file paths to read the data from each excel file in the master data folder
+    if (clean == TRUE) {df <- sapply(df, clean, simplify = F)} else {NULL}
+      #applies the previously defined function to clean up the imported data such that it can be merged into one master data sheet
+   df <- as.data.frame(do.call(rbind, df))
+      #merges the data into one master data sheet
+    df <- cbind(rownames(df), df)
+    df$`rownames(df)` <- as.character(df$`rownames(df)`)
+    colnames(df)[1] <- "File Name"
+    rownames(df) <- NULL
+      #converts the row names, which are the file names, to the first column of the data sheet and reformats them such that the file name can later be parsed in order to create classifiers
+    df <- classify(df, df$`File Name`, c("hank3_rat_","_immuno_", "488_", ".1um_", "1um_", "_100um", "_s", "_c", "_b", "_a", "_2", "_MTV", ".lsm", ".xls"))
+      #applies the previously defined function, specificying the proper delimiters to correctly separate the classifiers consistently despite the ambiguity of the file naming pattern already present in the data
+    df
+}
+  #defines an all-in-one function that can be used to read and prepare all of the data, within a specific sheet, across the designated excel files
+
+dta <- readandprep(3, clean = TRUE)
+  #reads, prepares, and merges the data from "Spine Details-Automatic" sheet (sheet 3) in each excel spreadsheet
+filenameforcheck <- dta$`File Name`
+dta$`File Name` <- NULL
+  #removes the original file name since the data is properly classified
+dta2 <-readandprep(1)
+  #reads, prepares, and merges the data from "Individual Totals-Dendrites" sheet (sheet 1) in each excel spreadsheet
+dta3 <- readandprep(2)
+  #reads, prepares, and merges the data from "Tree Spines-Dendrites" sheet (sheet 2) in each excel spreadsheet
+
+dta$`Volume(µm³)` <-  as.numeric(dta$`Volume(µm³)`)
+dta$`Surface Area(µm²)` <- as.numeric(dta$`Surface Area(µm²)`)
+dta$`Contact Area(µm²)` <- as.numeric(dta$`Contact Area(µm²)`)
+dta$`Head Diameter(µm)` <- as.numeric(dta$`Head Diameter(µm)`)
+  #converts various portions of the "Spine Details -Automatic" data frame into the proper format for more convenient use
+dta3$`Density(1/µm)` <- as.numeric(dta3$`Density(1/µm)`)
+  #converts "various"Density(1/µm) column of the "Tree Spines-Dendrites" data frame into the proper format for more convenient use
+```
+
+## **Data Analysis** | Aggregating Means by Classifiers
+  
+```{r, warning = FALSE}
+#"Spine Details-Automatic" Sheet Analysis
+#NOTE: For the analysis of data within this sheet, classification of "Tree" was kept even when assessing by sheet, cell, and animal, because it is believed that there is only one tree per sheet. As such, classifying on the basis of "Tree" has no effect (does not divide the data into smaller classifications). However, it is maintained to bring attention to the presence of multiple trees if the situation arises).
+aggbysheet <- aggregate(dta, by = list(dta$`Spine Type`, dta$Rat, dta$`Brain Region`, dta$Section, dta$Cell, dta$`Apical or Basal`, dta$`Apical/Basal Number`, dta$Tree), FUN = mean)
+aggbysheet <- cbind(aggbysheet[,c(1:8)], aggbysheet$`Head Diameter(µm)`, aggbysheet$`Volume(µm³)`)
+colnames(aggbysheet) <- c("Spine Type", "Rat", "Brain Region", "Section", "Cell", "Apical or Basal", "Apical/Basal Number", "Tree", "Average Head Diameter (µm)", "Average Volume (µm³)")
+  #averages the values within each numerical data column based on spine type for each excel sheet (all data that shares the same rat #, brain region, section, cell number, apical/basal designation, and apical/basal number); then puts this into a spreadsheet with just classifiers and the data points in question, Average Head Diameter and Volume.
+aggbycell <- aggregate(aggbysheet, by = list(aggbysheet$`Spine Type`, aggbysheet$Rat, aggbysheet$`Brain Region`, aggbysheet$Section, aggbysheet$Cell, aggbysheet$Tree), FUN = mean)
+aggbycell <- cbind(aggbycell[,c(1:6)], aggbycell$`Average Head Diameter (µm)`,aggbycell$`Average Volume (µm³)`)
+colnames(aggbycell) <- c("Spine Type", "Rat", "Brain Region", "Section", "Cell", "Tree", "Average Head Diameter (µm)", "Average Volume (µm³)")
+  #averages the values of the previously aggregated data (by sheet) based on spine type for each cell (all data that shares the same rat #, brain region, section, and cell number; ignores apcial/basal designation and apical/basal number); then puts this into a spreadsheet with just classifiers and the data points in question, Average Head Diameter and Volume.
+aggbyanimal <- aggregate(aggbycell, by = list(aggbycell$`Spine Type`, aggbycell$Rat, aggbycell$Tree), FUN = mean)
+aggbyanimal <- cbind(aggbyanimal[,c(1:3)], aggbyanimal$`Average Head Diameter (µm)`, aggbyanimal$`Average Volume (µm³)`)
+colnames(aggbyanimal) <- c("Spine Type", "Rat", "Tree", "Average Head Diameter (µm)", "Average Volume (µm³)")
+  #averages the values of the previously aggregated data (by cell) based on spine type for each animal (all data that shares the same rat #; ignores brain region, section, cell number, apical/basal designation, and apical/basal number); then puts this into a spreadsheet with just classifiers and the data points in question, Average Head Diameter and Volume.
+bysheet <- aggregate(dta, by = list(dta$Rat, dta$`Brain Region`, dta$Section, dta$Cell, dta$`Apical or Basal`, dta$`Apical/Basal Number`, dta$Tree), FUN = mean)
+bysheet <- cbind(bysheet[,c(1:7)], bysheet$`Head Diameter(µm)`, bysheet$`Volume(µm³)`)
+colnames(bysheet) <- c("Rat", "Brain Region", "Section", "Cell", "Apical or Basal", "Apical/Basal Number", "Tree", "Average Head Diameter (µm)", "Average Volume (µm³)")
+bysheet$`Spine Type` <- "All Spines"
+aggbysheet <- rbind(aggbysheet, bysheet)
+  #averages the values within each numerical data column for each excel sheet (all data that shares the same rat #, brain region, section, cell number, apical/basal designation, and apical/basal number); then puts this into a spreadsheet with just classifiers and the data points in question, Average Head Diameter and Volume; finally, attaches these total averages (ignoring spine type) to the previous corresponding aggregate by spine type. Disable last two lines of code to use the checks.
+bycell <- aggregate(bysheet, by = list(bysheet$Rat, bysheet$`Brain Region`, bysheet$Section, bysheet$Cell, bysheet$Tree), FUN = mean)
+bycell <- cbind(bycell[,c(1:5)], bycell$`Average Head Diameter (µm)`, bycell$`Average Volume (µm³)`)
+colnames(bycell) <- c("Rat", "Brain Region", "Section", "Cell", "Tree", "Average Head Diameter (µm)", "Average Volume (µm³)")
+bycell$`Spine Type` <- "All Spines"
+aggbycell <- rbind(aggbycell, bycell)
+  #averages the values of the previously aggregated data (by sheet) for each cell (all data that shares the same rat #, brain region, section, and cell number; ignores apical/basal designation and apical/basal number); then puts this into a spreadsheet with just classifiers and the data points in question, Average Head Diameter and Volume; finally, attaches these total averages (ignoring spine type) to the previous corresponding aggregate by spine type. Disable last two lines of code to use the checks.
+byanimal <- aggregate(bycell, by = list(bycell$Rat, bycell$Tree), FUN = mean)
+byanimal <- cbind(byanimal[,1:2], byanimal$`Average Head Diameter (µm)`, byanimal$`Average Volume (µm³)`)
+colnames(byanimal) <- c("Rat", "Tree", "Average Head Diameter (µm)", "Average Volume (µm³)")
+byanimal$`Spine Type` <- "All Spines"
+aggbyanimal <- rbind(aggbyanimal, byanimal)
+  #averages the values of the previously aggregated data (by cell) for each animal (all data that shares the same rat #; ignores brain region, section, cell number, apical/basal designation, and apical/basal number); then puts this into a spreadsheet with just classifiers and the data points in question, Average Head Diameter and Volume; finally, attaches these total averages (ignoring spine type) to the previous corresponding aggregate by spine type. Disable last two lines of code to use the checks.
+
+#"Individual Totals-Dendrites" Sheet Analysis
+#NOTE: For the analysis of data within this sheet, classification of "Tree" was kept even when assessing by sheet, cell, and animal, because it is believed that there is only one tree per sheet. As such, classifying on the basis of "Tree" has no effect (does not divide the data into smaller classifications). However, it is maintained to bring attention to the presence of multiple trees if the situation arises).
+bysheet2 <- aggregate(dta2, by = list(dta2$Rat, dta2$`Brain Region`, dta2$Section, dta2$Cell, dta2$`Apical or Basal`, dta2$`Apical/Basal Number`, dta2$Tree), FUN = mean)
+bysheet2 <- cbind(bysheet2[,c(1:7)], bysheet2$`Length Total(µm)`)
+colnames(bysheet2) <- c("Rat", "Brain Region", "Section", "Cell", "Apical or Basal", "Apical/Basal Number", "Tree", "Length Total(µm)")
+  #averages the values within each numerical data column for each excel sheet (all data that shares the same rat #, brain region, section, cell number, apcal/basal designation, and apical/basal number); then puts this into a spreadsheet with just classifiers and the data points in question, Length Total.
+bycell2 <- aggregate(bysheet2, by = list(bysheet2$Rat, bysheet2$`Brain Region`, bysheet2$Section, bysheet2$Cell, bysheet2$`Tree`), FUN = mean)
+bycell2 <- cbind(bycell2[,c(1:5)], bycell2$`Length Total(µm)`)
+colnames(bycell2) <- c("Rat", "Brain Region", "Section", "Cell", "Tree", "Length Total(µm)")
+  #averages the values of the previously aggregated data (by sheet) for each cell (all data that shares the same rat #, brain region, section, cell number, apical/basal designation, and apical/basal number); then puts this into a spreadsheet with just classifiers and the data points in question, Length Total.
+byanimal2 <- aggregate(bycell2, by = list(bycell2$Rat, bycell2$Tree), FUN = mean)
+byanimal2 <- cbind(byanimal2[,1:2], byanimal2$`Length Total(µm)`)
+colnames(byanimal2) <- c("Rat", "Tree", "Length Total(µm)")
+  #averages the values of the previously aggregated data (by cell) for each animal (all data that shares the same rat #, brain region, section, cell number, apical/basal designation, and apical/basal number); then puts this into a spreadsheet with just classifiers and the data points in question, Length Total.
+
+#"Tree Spines-Dendrites" Sheet Analysis
+aggbysheet3 <- aggregate(dta3, by = list(dta3$Type, dta3$Rat, dta3$`Brain Region`, dta3$Section, dta3$Cell, dta3$`Apical or Basal`, dta3$`Apical/Basal Number`), FUN = mean)
+aggbysheet3 <- cbind(aggbysheet3[,c(1:7)], aggbysheet3$`Density(1/µm)`)
+colnames(aggbysheet3) <- c("Type", "Rat", "Brain Region", "Section", "Cell", "Apical or Basal", "Apical/Basal Number", "Density(1/µm)")
+  #averages the values within each numerical data column based on spine type for each excel sheet (all data that shares the same rat #, brain region, section, cell number, apical/basal designation, and apical/basal number); then puts this into a spreadsheet with just classifiers and the data points in question, Density.
+aggbycell3 <- aggregate(aggbysheet3, by = list(aggbysheet3$Type, aggbysheet3$Rat, aggbysheet3$`Brain Region`, aggbysheet3$Section, aggbysheet3$Cell), FUN = mean)
+aggbycell3 <- cbind(aggbycell3[,c(1:5)], aggbycell3$`Density(1/µm)`)
+colnames(aggbycell3) <- c("Type", "Rat", "Brain Region", "Section", "Cell", "Density(1/µm)")
+  #averages the values of the previously aggregated data (by sheet) based on spine type for each cell (all data that shares the same rat #, brain region, section, and cell number; ignores apcial/basal designation and apical/basal number); then puts this into a spreadsheet with just classifiers and the data points in question, Density.
+aggbyanimal3 <- aggregate(aggbycell3, by = list(aggbycell3$Type, aggbycell3$Rat), FUN = mean)
+aggbyanimal3 <- cbind(aggbyanimal3[,c(1:2)], aggbyanimal3$`Density(1/µm)`)
+colnames(aggbyanimal3) <- c("Type", "Rat", "Density(1/µm)")
+  #averages the values of the previously aggregated data (by cell) based on spine type for each animal (all data that shares the same rat #; ignores brain region, section, cell number, apical/basal designation, and apical/basal number); then puts this into a spreadsheet with just classifiers and the data points in question, Density.
+#Note that in these aggby~ for the "Tree Spines-Dendrites" sheet, one of the Types is labelled Spines; this designation includes all spinte types and thus alleviates the necessity for 3 separate sheets in which values are aggregated by sheet, animal, and cell without separating spines.
+```
+
+## **Checks** | Logical Assurances of Code 
+
+```{r, warning = FALSE}
+#NOTE: recent changes to the nature of the data aggregation mean that this check is no longer as exhaustive as it once was. Some of it may also not work properly (will show ERROR when there are no mistakes) due to the combination of the aggregates by spine with the total aggregates for the head diameter and volume data (this can be fixed by deactivating a few lines of code in the chunk above to prevent their merging)
+cleaneduprownames <- as.data.frame(do.call(rbind, strsplit(filenameforcheck, "xlsx.")))
+  #removes the ".#" originally included at the end of each file name to differentiate those cells from the same file (number of row within original excel file)
+sheet <- cleaneduprownames
+  #cleans up the list of file names so that all of the files within the same excel sheet have identical values
+
+#Number Sheet Check 1
+numbersheetcheck <- aggregate(dta, by = list(sheet$V1), FUN = mean)
+  #aggregates average values based on the sheet the data comes from
+ifelse (nrow(numbersheetcheck) == length(files), "NUMBER SHEET CHECK - ALL CLEAR", "NUMBER SHEET CHECK - ERROR")
+  #checks to see if the number of rows in this aggregation by file name suggests the same number of sheets as the number of files imported at the start, if so it returns "NUMBER SHEET CHECK - ALL CLEAR", otherwise it returns "NUMBER SHEET CHECK - ERROR"
+
+#Nmber Sheet Check 2
+numbersheetcheck2 <- aggregate(dta, by = list(dta$Rat, dta$`Brain Region`, dta$Section, dta$Cell, dta$`Apical or Basal`, dta$`Apical/Basal Number`), FUN = mean)
+  #aggregates data by sheet and averages all of the data values for rows that share all classifiers
+ifelse (nrow(numbersheetcheck2) == length(files), "NUMBER SHEET CHECK 2 - ALL CLEAR", "NUMBER SHEET CHECK 2 - ERROR")
+  #checks to see if the number of rows in this aggregation by the full set of classifiers (rather than file name) matches the number of files imported at the start, if so it returns "NUMBER SHEET CHECK - ALL CLEAR", otherwise it returns "NUMBER SHEET CHECK - ERROR"
+
+#Aggregate by Sheet Check
+aggbysheetcheck <- aggregate(dta, by = list(dta$`Spine Type`, sheet$V1), FUN = mean)
+colnames(aggbysheetcheck) <-  c("Spine Type", "File Name",colnames(dta))
+aggbysheetcheck <- cbind(aggbysheetcheck[1:2], aggbysheetcheck$`Head Diameter(µm)`, aggbysheetcheck$`Volume(µm³)`)
+colnames(aggbysheetcheck) <-  c("Spine Type", "File Name", "Head Diameter(µm)", "Volume (µm³)")
+    #averages the values within each numerical data column for each excel sheet (for all data that shares the same file name); by achieving this through a different method than above, in "aggbysheet", this section as whole serves as a check (although not fool-proof, if "aggbysheet" and "aggsheet" match, the classification has very likely worked properly); NOTE: to make use of this check, make sure to deactivate the last function in the previous chunk "dta$`File Name` <- NULL".
+ifelse (nrow(aggbysheet) == nrow(aggbysheetcheck), "AGGREGATE BY SHEET CHECK - ALL CLEAR", "AGGREGATE BY SHEET CHECK - ERROR")
+ #checks to see if the number of rows in this aggregation by file name and spine type matches the number of rows when aggregating by the classifiers rather than the file name itself, if so it returns "AGGREGATE BY SHEET CHECK - ALL CLEAR", otherwise it returns "AGGREGATE BY SHEET CHECK - ERROR"; this also indirectly tests to see if classification occured properly
+
+#Classifier Number Check
+clnumbercheck <- function(y, x, splits, ...) #where y is your main data sheet, x is the data you wish to parse, and splits are the delimiters
+{
+    for (split in splits)
+    {
+        x <- unlist(strsplit(x, split, ...))
+    }
+    cl <- x[!x == ""] # Remove empty values
+    ifelse(nrow(as.data.frame(cl)) == (7*nrow(dta)), "CLASSIFIER NUMBER CHECK - ALL CLEAR", "CLASSIFIER NUMBER CHECK - ERROR")
+}
+  #creates a function that checks to see if the number of classifiers parsed is consistent with the number of files retrieved
+clnumbercheck(dta, filenameforcheck, c("hank3_rat_", "_immuno_", "488_", ".1um_", "_100um", "_s", "_c", "_b", "_a", "_2", ".lsm", ".xls"))
+  #applies the previously created function to check if the number of classifiers parsed is consistent with the number of files retrieved; if so it returns "CLASSIFER NUMBER CHECK - ALL CLEAR", otherwise it returns "CLASSIFIER NUMBER CHECK - ERROR"
+
+#Average Head Diameter Check
+avghdck <- as.data.frame(cbind(sort(aggbysheet$`Average Head Diameter (µm)`), sort(aggbysheetcheck$`Head Diameter(µm)`)))
+  #creates a matrix where one column is the average head diameter in the aggregate by sheet and the other column is the average head diameter in the aggregate by sheet check (which uses the file names rather than classifiers); both rows are sorted from low to high such that the first row contains the lowest values in each column, the last row has the highest value from each column
+avghdck <- as.data.frame(sum(abs(avghdck$V1-avghdck$V2)))
+  #for each row in the previous matrix, takes the difference between the two columns and then takes the absolute value of that difference (such that if the two columns match, the output will be zero, if not the difference will be expressed as a positive number); these absolute values are then all summed (such that if all of the corresponding values originally matched the sum will be 0)
+ifelse(avghdck$`sum(abs(avghdck$V1 - avghdck$V2))` == 0, "AVERAGE HEAD DIAMETER CHECK - ALL CLEAR", "AVERAGE HEAD DIAMETER CHECK - ERROR")
+ #if the sum of the absolute value of the differences described earlier is 0 (suggesting all the data matches), this outputs a message that "AVERAGE HEAD DIAMETER CHECK - ALL CLEAR", otherwise it ouputs "AVERAGE HEAD DIAMETER CHECK - ERROR"
+
+#Average Volume Check
+avgvolck <- as.data.frame(cbind(sort(aggbysheet$`Average Volume (µm³)`), sort(aggbysheetcheck$`Volume (µm³)`)))
+  #creates a matrix where one column is the average volume in the aggregate by sheet and another column is the average volume in the aggregate by sheet check (which uses the file names rather than classifiers); both rows are sorted from low to high such that the first row contains the lowest values in each column, the last row has the highest value from each column
+avgvolck <- as.data.frame(sum(abs(avgvolck$V1-avgvolck$V2)))
+  #for each row in the previous matrix, takes the difference between the two columns and then takes the absolute value of that difference (such that if the two columns match, the output will be zero, if not the difference will be expressed as a positive number); these absolute values are then all summed (such that if all of the corresponding values originally matched the sum will be 0)
+ifelse(avgvolck$`sum(abs(avgvolck$V1 - avgvolck$V2))` == 0, "AVERAGE VOLUME CHECK - ALL CLEAR", "AVERAGE VOLUME CHECK - ERROR")
+ #if the sum of the absolute value of the differences described earlier is 0 (suggesting all the data matches), this outputs a message that "AVERAGE VOLUME CHECK - ALL CLEAR", otherwise it ouputs "AVERAGE VOLUME CHECK - ERROR"
+
+#Unique Value Manual Check
+#list(unique(dta$Rat), unique(dta$`Brain Region`), unique(dta$Section), unique(dta$Cell), unique(dta$`Apical or Basal`), unique(dta$`Apical/Basal Number`))
+  #this lists all of the unique values for each classifier; meant to serve as a manual check (not fool-proof, but still useful) that classifying has likely been done properly; activated so as to ouput the list, but easily deactivated for the purpose of hiding the list
+```
+
+## **Output** | Data Tables, Formatting, and Presentation
+
+```{r, warning = FALSE}
+write_xlsx(list(HVBySheet = aggbysheet, HVByCell = aggbycell, HVByAnimal = aggbyanimal, LenghtTotalBySheet = bysheet2, LenghtTotalByCell = bycell2, LenghtTotalByAnimal = byanimal2, DensityBySheet = aggbysheet3, DensityByCell = aggbycell3, DensityByAnimal = aggbyanimal3), path = "~/Box/filepath/Matthew Fam Code and Output/Output/FinalAnalysis.xlsx")
+  #outputs the final results into an excel file with separate sheets for each individual table (to manually check "Spine by File Name," add "SpineByFileName = aggbysheetcheck")
+write_xlsx(list("Spine_Details-Automatic" = dta, "Individual_Totals-Dendrites" = dta2, "Tree_Spines-Dendrites" = dta3), path = "~/Box/filepath/Matthew Fam Code and Output/Output/FullMergedRawDataSet.xlsx")
+  #outputs the full set of data compiled from combining all of the individual excel sheets; easily deactivated
+```

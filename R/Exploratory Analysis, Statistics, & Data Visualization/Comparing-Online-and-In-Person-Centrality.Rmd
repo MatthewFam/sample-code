@@ -1,0 +1,1795 @@
+Exploratory analysis of social data (view at matthewfam.com/code/Comparing-Online-and-In-Person-Centrality).
+Written 2019-22.
+---
+title: "Comparing Centrality and Behavior in Online vs. In-Person Social Networks"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+  html_notebook: default
+  pdf_document: default
+  word_document: default
+editor_options: 
+  chunk_output_type: inline
+---
+### An Exploratory Analysis
+#### Matthew Fam—*Dartmouth Social Systems Lab*
+
+## Acknowledgement
+
+The following research was produced by Matthew Fam with the help of Christopher Welker, a graduate student in Dartmouth's Department of Psychological and Brain Sciences. It was completed in [Dartmouth College's Social Systems Lab](http://www.wheatlab.com), led by Dr. Thalia Wheatley. A portion of this work was made possible by a generous stipend from Dartmouth's Undergraduate Advising and Research (UGAR), specifically the James O. Freedman Presidential Scholars Program.
+
+## Abstract
+
+How do people become popular online, and do those same behaviors predict popularity in person? Prior work has shown that people’s centrality—a measure of popularity—differs between their online and offline social networks (Gaito et al., 2012). Here, we investigate which behaviors predict centrality in online and offline social networks. We analyzed an open-source, multi-layer social network (N = 79) with four categories of edges: (i) undirected, online social connections on Facebook; (ii) directed, self-reported (offline) friendships; (iii) undirected, face-to-face (offline) interactions measured by radio frequency identification (RFID) tags; and (iv) undirected instances of simultaneous presence (offline) in a shared space (“co-locations”) measured by RFID tags.  Using correlation, regression, clustering, and structural equation modeling (SEM), we found that centrality in the colocation network predicted greater centrality in the online social network, but not in the offline friendship network. This suggests that simply being around others in a physical space translates to centrality in an online social network. However, co-location did not lead to centrality in the offline friendship network, implying that in-person connections require more complex behavioral patterns than mere co-presence.  
+&emsp;&emsp;*Keywords:* social networks, friendship, social media, social interaction
+
+## Methods
+ 
+Data used in this exploratory analysis were retrieved from [SocioPatterns](http://www.sociopatterns.org/datasets/high-school-contact-and-friendship-networks/). The referenced data sets were created by recording contacts and relations between between 2^nd^ year students in a high school in Marseille, France over the span of five days during December 2013. Four data sets contained information about students in nine classes: directed contacts between students (reported at the end of the fourth day), a directed network of reported friendships, and pairs of students for which Facebook friendship status was known (whether present or absent) respectively. A fifth file included general identification data for the study participants and later update provided a sixth file containing the colocation contacts of students in a high school, measured by radio-frequency identification (RFID) scanning devices. 
+
+This collection of data was manipulated (i.e. wrangled, analyzed, and visualized) using R. Initially, each selected network's dataset was converted to an adjacency matrix. Centralities (betweenness, closeness [in- and out-closeness in directed networks], eigenvector, degree, and pagerank) were calculated for each ID in addition to various relational/behavioral metrics of interest. Measures calculated for separate networks were tied together by matching subjects' general identifying characteristics (gender, class, etc.). After this setup was complete, data was filtered to only include participant IDs present across all of the data sets relevant to this exploration. This combined and filtered dataset was then used for the following analyses. [Code for data preparation](https://www.matthewfam.com/code/Network-Data-Prep) is available online.
+
+
+## Analyses Walkthrough
+
+NOTE: A decision to define significance according to an ⍺-level of 0.05, or a 95% significance level, was chosen arbitrarily prior to running any statistical tests to minimize the potential of p-hacking.  
+
+DISCLAIMER: The "analyses" provided below are one possible way of interpreting the data and corresponding results. As an exploratory analysis—not a full-fledged scientific publication—these results, descriptions, and discussions may not quite satisfy the accepted standard for scientific rigor. Rather, this work is meant to document an approach to exploring the data at hand while highlighting points of interest, notable observations, relevant thoughts, and possible ideas for further exploration. Though a solid effort was made to properly apply the scientific method, a certain level of liberty was taken in order to examine avenues that would have been closed otherwise for lack of sufficient evidence. These instances are documented and made obvious to maintain the integrity and credibility of the study.
+
+LIMITATIONS: The included data, particularly in the cases of the interaction and colocation networks, only account for activity during the school day. They fail to consider social activity between subjects outside of school hours and neglect other forms of social interaction (digital messaging, telephone communication, etc.). Additionally, data was not collected for each subject across all four networks. As such, comparative analyses (and corresponding visualizations) were performed after the relevant networks were filtered to include only those subjects present in all data sets. However, to ensure the most realistic portrayal of each network and each subject's position within, centrality measures, behavioral metrics, and other parameters were calculated based on all available data.
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(dplyr)
+library(reshape2)
+library(car)
+library(mousetrap)
+library(heatmaply)
+library(knitr)
+library(grid)
+library(ggpubr)
+library(gridExtra)
+library(data.table)
+library(formattable)
+library(tidyr)
+library(kableExtra)
+library(GGally)
+library(network)
+library(sna)
+library(igraph)
+library(intergraph)
+library(ppcor)
+library(lme4)
+library(lmerTest)
+library(factoextra)
+library(FactoMineR)
+library(corrplot)
+library(lavaan)
+library(lavaanPlot)
+library(DiagrammeR)
+library(mclust)
+library(tidyverse)
+library(magick)
+library(vtree)
+library(DiagrammeRsvg)
+library(cluster)
+library(clValid)
+library(clustree)
+library(NbClust)
+library(ggiraphExtra)
+library(ggradar)
+library(showtext) # for 'ggradar' package
+  font_add_google("Lobster Two", "lobstertwo") # for 'ggradar' package
+  font_add_google("Roboto", "roboto") # for 'ggradar' package
+#library(psych) #loading 'psych' package interferes with specific code later on
+#library(ggforce)
+#library(caret)
+
+knitr::opts_chunk$set(out.width='1000px', dpi=200,
+                      collapse=TRUE, 
+                      echo=FALSE,
+                      message = FALSE,
+                      warning = FALSE)
+```
+```{r}
+# import previously prepared data (calculated centrality and network feature/behavior data)
+dta <- read.csv("~/Dropbox (Personal)/Matt/Matt_Intro_Networks/Data.csv", header = TRUE)
+
+# import 4 networks and filter for only those subjects present in all 4
+
+# import raw facebook network data
+fbnet <- read.csv("~/Dropbox (Personal)/Matt/Matt_Intro_Networks/Raw SocioPatterns Data/Facebook-known-pairs_data_2013.csv", header = FALSE)
+
+# filter raw facebook network data to keep only connections between people present across all examined networks
+fbnet <- subset(fbnet, fbnet$V3 == 1)
+fbnet <- subset(fbnet, fbnet$V1 %in% dta$id)
+fbnet <- subset(fbnet, fbnet$V2 %in% dta$id)
+
+# import raw interaction network data
+intnet <- read.csv("~/Dropbox (Personal)/Matt/Matt_Intro_Networks/Raw SocioPatterns Data/High-School_data_2013.csv", header = FALSE)
+
+# filter raw interaction network data to keep only connections between people present across all examined networks
+intnet <- subset(intnet, intnet$V2 %in% dta$id)
+intnet <- subset(intnet, intnet$V3 %in% dta$id)
+
+# transform raw interaction network data to proper format for network graphing
+intnet <- cbind (intnet, paste(intnet$V2, intnet$V3, sep = " "))
+colnames(intnet) <- c("time", "id1", "id2", "class1", "class2", "int")
+intnetweights <- as.data.frame(table(intnet$`int`))
+colnames(intnetweights) <- c("int", "weights")
+intnet <- cbind(intnetweights$int, intnetweights)
+colnames(intnet) <- c("toparse", "id", "weights")
+intnet <- separate(intnet, toparse, into = c("id1", "id2"), sep = " (?=[^ ]+$)")
+
+# import raw friendship network data
+frnnet <- read.csv("~/Dropbox (Personal)/Matt/Matt_Intro_Networks/Raw SocioPatterns Data/Friendship-network_data_2013.csv", header = FALSE)
+
+# filter raw friendship network data to keep only connections between people present across all examined networks
+frnnet <- subset(frnnet, frnnet$V1 %in% dta$id)
+frnnet <- subset(frnnet, frnnet$V2 %in% dta$id)
+
+# import colocation friendship network data
+colnet <- read.csv("~/Dropbox (Personal)/Matt/Matt_Intro_Networks/Raw SocioPatterns Data/colocation_HS_Data.csv", header = FALSE)
+
+# transform raw interaction network data to proper format for network graphing and filter to keep only connections between people present across all examined networks
+colcalc <- cbind(colnet[,2:3], colnet[,1])
+
+colnet <- subset(colnet, colnet$V2 %in% dta$id)
+colnet <- subset(colnet, colnet$V3 %in% dta$id)
+colnet <- cbind (colnet, paste(colnet$V2, colnet$V3, sep = " "))
+colnames(colnet) <- c("time", "id1", "id2", "int")
+colnetweights <- as.data.frame(table(colnet$`int`))
+colnames(colnetweights) <- c("int", "weights")
+colnet <- cbind(colnetweights$int, colnetweights)
+colnames(colnet) <- c("toparse", "id", "weights")
+colnet <- separate(colnet, toparse, into = c("id1", "id2"), sep = " (?=[^ ]+$)")
+
+# refilter all network data to ensure data maintained only for people present across all examined networks
+fbnet <- subset(fbnet, fbnet$V1 %in% dta$id)
+fbnet <- subset(fbnet, fbnet$V2 %in% dta$id)
+intnet <- subset(intnet, intnet$id1 %in% dta$id)
+intnet <- subset(intnet, intnet$id2 %in% dta$id)
+frnnet <- subset(frnnet, frnnet$V1 %in% dta$id)
+frnnet <- subset(frnnet, frnnet$V2 %in% dta$id)
+colnet <- subset(colnet, colnet$id1 %in% dta$id)
+colnet <- subset(colnet, colnet$id2 %in% dta$id)
+
+# define class labels for simpler labelling in plots/visualizations
+Class <- dta$class
+labels_Class <- c(
+  "2BIO1" = expression(Bio1),
+  "2BIO2" = expression(Bio2),
+  "2BIO3" = expression(Bio3),
+  "MP" = expression(MP1),
+  "MP*1" = expression(MP2),
+  "MP*2" = expression(MP3),
+  "PC" = expression(PC1),
+  "PC*" = expression(PC2),
+  "PSI*" = expression(PSI)
+)
+
+# define gender labels for simpler labelling in plots/visualizations
+Gender <- dta$gender
+labels_Gender <- c(
+  "M" = expression(Male),
+  "F" = expression(Female),
+  "Unknown" = expression(Unknown)
+)
+
+# calculate average of in- and out-closeness values in the directed friendship network (to create a single value to compare with closeness from undirected network [which do not have separate in- and out- designations given their lack of direction])
+dta$avg_of_inoutclose_frn <- ((dta$frn_in_cls + dta$frn_out_cls)/2)
+```
+
+### Network Visualizations
+
+Prior to exploring the statistics behind the given networks, it may be informative to visualize them.  
+<br>
+```{r echo=FALSE, message=FALSE, warning=FALSE, results='hide'}
+# create function to form network/graph object from edge list and plot graph
+netexplore <- function(net,             # edge list (first two columns must be vertices for each edge)
+                       df,              # data frame with all relevant data for each vertex (first column must be vertex id matching those in edge list)
+                       weight = NULL,   # specific column of net data frame (which will be used to define darkness of edges/lines)
+                       directed = FALSE)
+# NOTE: this function automatically assigns node color based on class and shape on gender (alter later if going to add other things)
+{
+  set.seed(2568) #set seed to prevent different perspective for plot/visualization each time code is run
+  
+  # translate weight to edge color using grey gradient
+  if (weight == FALSE) {NULL} else {grad <- colorRampPalette(c("grey100", "grey0"))
+  net$order = findInterval(weight, sort(weight))
+  }
+  
+  # create graph/network object using edge list 
+  g <- graph_from_data_frame(d = net,
+                             vertices = df,
+                             directed = if (directed == TRUE) {TRUE} else {FALSE})
+  
+  # plot network graph visualization
+  g <- ggnet2(g, color = V(g)$class, fill = V(g)$class, shape = V(g)$gender, size = 2.5, alpha = .9,
+                             arrow.size = if (directed == TRUE) {3.5} else {0},
+                             arrow.gap = if (directed == TRUE) {.02} else {0},
+                             edge.color =  if (weight == FALSE) {"grey50"} else {grad(nrow(net))[net$order]}) +
+    geom_point(aes(shape = shape), size = 2.5, color = "white", fill = "white", alpha = .9) +
+    geom_point(aes(fill = color, color = color, shape = shape), size = 2.5, alpha = .2) +
+    geom_point(aes(fill = color, shape = shape), color ="black", size = 2.6, stroke = .3) +
+    scale_color_discrete(labels = labels_Class, name = "Class") +
+    scale_fill_discrete(guide = "legend", labels = labels_Class, name = "Class") +
+    scale_shape_manual(values = c(22, 21, 24),
+                       labels = labels_Gender,
+                       name = "Gender",
+                       breaks = c("M", "F", "Unknown")) +
+    guides(shape = guide_legend(order = 1, override.aes = list(aes(shape = shape), size = 2.6, color = "black", stroke = .45)),
+           color = guide_legend(order = 2, nrow = 1, override.aes = list(aes(fill = color), size = 2.6)),
+           fill = FALSE) + 
+    theme(legend.box = "vertical",
+          legend.margin=margin())
+}
+
+# graph edge lists and plot/visualize said network graphs in a single plot
+g <- ggarrange(netexplore(fbnet, dta, weight = FALSE, directed = FALSE),
+               netexplore(intnet, dta, weight = intnet$weights, directed = FALSE),
+               netexplore(frnnet, dta, weight = FALSE, directed = TRUE),
+               netexplore(colnet, dta, weight = colnet$weights, directed = FALSE),
+               ncol = 2, nrow = 2,
+               labels = "AUTO",
+               common.legend = TRUE,
+               legend = "bottom")
+```
+```{r}
+caption <- expression(""*bold("Figure 1")*" Network Visualizations")
+grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+```
+<br>
+<br>
+The figure above depicts the various networks analyzed in this project:(A) an online, undirected network of Facebook "friend" connections; (B) an offline, undirected face-to-face interaction network measured by radio frequency identification (RFID) tags (recordings every 20s); (C) an offline, directed network of self-reported friendships; and (D) an offline, undirected simultaneous presence in a shared space (colocation), measured by RFID (recordings every 20s). In each of these networks, colors mark the classes/specializations that the corresponding students belong to. "Bio" classes focus on biology; "MP" classes—mathematics and physics; "PC" classes—physics and chemistry; "PSI" classes—engineering. Students in Bio1 are depicted in red, Bio2 in orange, Bio3 in light green, MP1 in bright green, MP3 in teal, PC1 in sky-blue, PC2 in purple, and PSI in pink; males are depicted as squares and females as circles. Edge darkness in (B) the interaction network and (D) the colocation network represents total time spent interacting or colocating respectively. Arrowheads in (C) the friendship network mark the direction of reported friendships (an arrow pointing from individual 1 to individual 2 suggests that individual 1 reported individual 2 as a friend).
+
+### Network Comparisons
+
+Given the presence of four separate networks (Facebook friendships, in-person friendships, interactions, and colocations), understanding the relationship between these networks is a logical starting point. Namely, it is important to assess the consistency of an individual's relative centrality across networks, within networks, and/or within specific measures.
+
+Note that this initial test will not produce any scientifically rigorous results. Rather, the results will provide some basic information about the structure of the data and the relationships between different variables&mdash;perhaps revealing specific avenues worth exploring in more detail. Since no defined question is being asked, no significance tests will be performed to minimize risk of Type I error.  
+<br>
+```{r}
+# create a matrix of correlations between centrality (and other) network measures (correlated against each other)
+centrality_correlation_matrix <- cor(dta[,c("fb_deg","fb_cls","fb_egn","fb_bet","fb_pgrnk",
+                                            "frn_deg", "avg_of_inoutclose_frn","frn_egn", "frn_bet",
+                                            "frn_pgrnk","int_bet","int_egn","int_cls", "int_deg", 
+                                            "colocation_ent", "social_ent", "cln_deg", "cln_bet", 
+                                            "cln_cls", "cln_egn", "cln_pgrnk")])
+
+# name rows and columns of matrix for intuitive, legible labelling in plot
+rownames(centrality_correlation_matrix) <- 
+  colnames(centrality_correlation_matrix) <-
+  c("Degree(FB)","Closeness(FB)","Eigenvector(FB)","Betweenness(FB)","PageRank(FB)","Degree(FN)",
+    "Mean Closeness(FN)","Eigenvector(FN)","Betweenness(FN)","PageRank(FN)","Betweenness(I)",
+    "Eigenvector(I)","Closeness(I)", "Degree(I)", "Colocation Entropy(CN)", "Social Entropy(I)", 
+    "Degree(CN)", "Betweenness(CN)", "Closeness(CN)", "Eigenvector(CN)", "PageRank(CN)")
+
+pdf(file = NULL) #workaround to prevent automatic "heatmaply" plot
+sink("/dev/null") #workaround to prevent automatic "heatmaply" plot
+
+# plot heatmap of centrality/network-measure correlations
+g <- ggheatmap(centrality_correlation_matrix,
+               distfun = "pearson",
+               hclust_method = "ward.D2",
+               color = cool_warm,
+               limits = c(-1,1),
+               k_col = 4,
+               k_row = 4)
+
+marplt <- plot.new()
+g <- ggarrange(g, marplt, ncol = 2, nrow = 1, widths = c(70,1))
+
+sink() #workaround to prevent automatic "heatmaply" plot
+invisible(dev.off()) #workaround to prevent automatic "heatmaply" plot
+
+caption <- expression(""*bold("Figure 2")*"  Network Measure Correlations")
+grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+```
+<br>
+<br>
+In the figure above, besides the specification of each centrality measure, the network on which that measure is based is noted in parentheses (I-Interaction Network, FN-Friendship Network, FB-Facebook Network, CN-Colocation Network). The dendograms are color-coded to show the division of the data into four groups, based on heirarchical clustering to determine how closely related the measures are to each other. The decision to classify the dendogram into four groups was done to assess whether the data would divide along the inherent network classes, of which there are four.
+
+As one might expect, these results suggest that **centrality measures within networks are closely related**, clustering together with a few exceptions: Eigenvector (Colocation Network), Colocation Entropy (Colocation Network), and some Friendship network measures—which, despite clustering with the Facebook Network metrics, remain closely tied to their Friendship network counterparts, existing on some kind of blurred boundary between the respective networks. Though these instances might seem to contradict the pattern of similarity between intra-network centrality measures, colocation-eigenvector still has similarly high correlations with other colocation network measures. Colocation entropy on the other hand does not seem to correlate especially well with any other measures, within or across networks. The closest network measure relation seems to be Facebook-PageRank, although the other measure of entropy, social entropy (interaction network), is a close second. In this context, the misallignment is not much of a concern given that entropy is not a centrality measure like the other values being correlated.
+
+Looking deeper, it seems that **centrality measures within networks are most closely related in the Facebook network, followed by the colocation and interaction networks, both similarly intra-related**. The **friendship network measures have the most variation among themselves**. The nature of the networks may explain this phenomenon. Being that the Facebook, interaction, and colocation networks are not directed (interactions, colocations, and Facebook friends are alwats two-sided/mutual), the consistency across measures makes sense. The added simplicity of the Facebook network, where there is no element of weight, might then explain why its measures are more closely connected than those within the interaction or colocation networks. In both of the latter cases, there is an element of weight in the form of time spent interacting or colocating. When considering the friendship network on the other hand, the directionality of connections allows for more complexity and thus more variation.
+
+Of the four networks, the **Facebook and friendship networks appear to be the most closely related networks**. This might be intuitively explained by the nature of the networks&mdash;the Facebook and friendship networks being similar in that they are social networks in contrast to the interaction network, which measures behavioral activity, and the colocation network, which measures sharing of space. These two **behavioral networks (interaction and colocation networks) seem to be more closely related to each other than to any other network**.
+
+Notably, three of the four **eigenvector measures across networks clustered tightly together**, with only the interaction network's measure of eigenvector separating from its counterparts within other networks. This suggests eigenvector is likely the most consistent centrality measure across networks and may serve as the best indicator of overall social success.
+
+### Class Differences
+
+Due to the presence of participants within a school, one might expect the infrastructure in place to have an impact on networks. Though there is no data about how students' schedules differed based on class or how they may have been segregated during the school day, it is important to consider the possibility. Additionally, there is a chance that students' prioritization/preference for certain subjects underlies some behavioral, personality qualities which may affect/inform their centrality. As a result, it might be useful to explore the relationship between class and social entropy&mdash;beginning with a visualization.  
+<br>
+```{r}
+# create function for plotting and styling boxplots
+boxexplore <- function(g,h,i,j)
+{
+  ggplot(dta, aes(x=g, y=h)) +
+  geom_boxplot() +
+  labs(x = i, y= j) +
+  scale_x_discrete(labels = if (unique(g[1] == dta$class[1])==TRUE) labels_Class else labels_Gender) +
+  theme_classic() +
+  theme(plot.margin = unit(c(0.2,0.3,0.2,0.3), "cm"))
+}
+
+# plot boxplot of social entropy vs class
+g <- ggarrange(boxexplore(dta$class, dta$social_ent, "Class", "Social Entropy"),
+               ncol = 1, nrow = 1)
+
+caption <- expression(""*bold("Figure 3")*"  Social Entropy by Class")
+grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+```
+<br>
+<br>
+**Visualizing social entropy by class reveals some variation across class**. It is unclear whether this variation is enough to suggest that the variation in social entropy might be due to significant confounding variables, perhaps related to class rather than the psychological or behavioral factors we are more interested in deciphering.
+
+Before exploring the impact of possible confounds that come with class, it makes sense to create a one-way ANOVA to assess whether this variation in social entropy is due to chance.  
+<br>
+```{r}
+# create function to run ANOVA and display results in a formatted table
+anovatbl <- function (..., z)
+{
+  r <- lm(..., data = dta)
+  rows <- nrow(Anova(r, type = 3)[1:4])
+  r <- Anova(r, type = 3)
+  r <- round(r[1:4],3)
+  r <- r[-rows,]
+  r <- as.data.frame(r)
+  rownms <- c("Intercept", z)
+  colnames(r) <- c("Sum of Squares", "Degrees of Freedom", "F-Value", "P-Value")
+  rownames(r) <- NULL
+  r %>%
+    mutate(`Source of Variance` = rownms,
+           `Source of Variance` = cell_spec(`Source of Variance`, "html",
+                                            bold = ifelse(`P-Value` < 0.05, T, F)),
+            `F-Value` = cell_spec(`F-Value`, "html", color = ifelse(`P-Value` < 0.05, "forestgreen", "indianred"),
+                                  bold = ifelse(`P-Value` < 0.05, T, F))
+           )%>%
+    dplyr::select(`Source of Variance`, `Sum of Squares`, `Degrees of Freedom`, `F-Value`, `P-Value`) %>%
+    kable("html", escape = F, align = c("l", "c", "c", "c")) %>%
+    kable_styling("striped", full_width = F)
+}
+```
+`r anovatbl(dta$social_ent ~ dta$class, z = "Class")`
+
+Although the **effect of class on social entropy is not significant (p = `r round(Anova(lm(dta$social_ent ~ dta$class, data = dta), type = 3)[[4]][2],3)`)**, it still warrants attention and may be included in a model to minimize confounds.
+
+Before exploring the relationship between class and social entropy further, it would be wise to examine the social entropy measure itself The relationship between social entropy and number of friends is of particular interest in determining the value of the measure with respect to centrality and one's general position in the friendship network.
+<br>
+```{r}
+# create function to evaluate significance of correlation and assign a color accordingly
+sigtesttext <- function (g,h)
+{if (cor.test(g,h)[3] < .05)
+    "forestgreen"
+  else
+    "firebrick1"}
+
+# create a function to format (round) correlation coefficient as desired
+r <- function(g,h)
+  format(round(cor.test(g, h)[[4]], 3), nsmall = 3)
+  
+# create a function to format (round) correlation test p-value as desired
+p <- function(g,h)
+  format(round(cor.test(g, h)[[3]], 3), nsmall = 3)
+
+# create a function to make a plot-able text box displaying correlation coefficient
+rgrob <- function(g,h)
+  grobTree( textGrob(paste( "r = ", r(g,h)),  y = 0.2, x = 0.8, gp=gpar(fontsize = 9)))
+# create a function to make a plot-able text box displaying correlation test p-value
+pgrob <- function(g,h)
+  grobTree( textGrob(paste( "p = ", p(g,h)),  y = 0.1, x = 0.8, gp=gpar(fontsize = 9)))
+# create a function to make and format plot-able text box displaying both correlation coefficient and correlation test p-value
+grob<- grobTree( rectGrob(x = 0.80, y = 0.145, width = 0.36, height = 0.22, gp=gpar(fill = "white", alpha = 0.75)))
+
+# create a function to run correlation test, plot corresponding scatter plot (with regression line), display correlation-test values/results, and formats plot accordingly
+corexplore <- function(g,h,i,j)
+  ggplot(dta, aes(x=g, y=h)) +
+  geom_point() +
+  geom_smooth(method = "lm", col = sigtesttext(g, h), formula = y~x) +
+  labs(x = i, y = j) +
+  theme_classic() +
+  theme(plot.margin = unit(c(0.2,0.3,0.2,0.3), "cm"))+
+  annotation_custom(grob) +
+  annotation_custom(rgrob(g,h)) +
+  annotation_custom(pgrob(g,h))
+
+# calculate and plot social entropy vs number of friends (in friendship network)
+g <- ggarrange(corexplore(dta$total_num_friends_.frnnet., dta$social_ent, "Number of Friends", "Social Entropy"),
+                ncol = 1, nrow = 1)
+
+caption <- expression(""*bold("Figure 4")*"  Social Entropy Vs Number of Friends")
+grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+```
+<br>
+<br>
+This correlation test places into question the relevance of the social entropy measure as a reflection of friendship relations. **The statistically insignificant (p = `r p(dta$total_num_friends_.frnnet., dta$social_ent)`) negative correlation (r = `r r(dta$total_num_friends_.frnnet., dta$social_ent)`) serves as warning that the social entropy of participants' behavior is not indicative of social status or success**.
+
+Checking if controlling for class reveals a different result seems like a reasonable next step.  
+<br>
+```{r}
+# create function for table generation and visualization of regression results
+regtbl <- function (..., z)
+{
+  r <- round(summary(lm(..., data = dta))[[4]],3)
+  r <- as.data.frame(r)
+  rownms <- c("Intercept", z)
+  rownames(r) <- NULL
+  colnames(r) = c("Regression Coefficient", "Standard Error", "T-Value", "P-Value")
+  r %>%
+    mutate(`Independent Variable` = rownms,
+           `Independent Variable` = cell_spec(`Independent Variable`, "html", bold = ifelse(`P-Value` < 0.05, T, F)),
+          `Regression Coefficient` = cell_spec(`Regression Coefficient`, "html", color = ifelse(`P-Value` < 0.05, "forestgreen", "indianred"), bold = ifelse(`P-Value` < 0.05, T, F)))%>%
+    dplyr::select(`Independent Variable`, `Regression Coefficient`, `Standard Error`, `T-Value`, `P-Value`) %>%
+    kable("html", escape = F, align = c("l", "c", "c", "c")) %>%
+    kable_styling("striped", full_width = F)
+}
+```
+`r anovatbl(dta$total_num_friends_.frnnet. ~ dta$social_ent + class, z = c("Social Entropy", "Class"))`  
+
+This two-way Analysis of Variance (ANOVA) test reveals that **though number of friends does not vary significantly based on social entropy (p = `r round(Anova(lm(dta$num_friends ~ dta$social_ent + dta$class, data = dta), type = 3)[[4]][2],3)`; when controlling for class), it does significantly vary based on class (p = `r round(Anova(lm(dta$num_friends ~ dta$social_ent + dta$class, data = dta), type = 3)[[4]][3],3)`; when controlling for social entropy)**. A linear regression analysis can shed more light on the effects of individual classes.
+
+`r regtbl(dta$total_num_friends_.frnnet. ~ dta$social_ent + class, z = c("Social Entropy", "Bio2", "Bio3", "MP1", "MP2", "PC1", "PC2", "PSI"))`
+
+Linear regression analysis (using Bio1 as the standard of comparison for the other classes) reveals that **when controlling for social entropy, presence within Bio2, Bio3, MP1, or PSI significantly (p = `r round(summary(lm(dta$total_num_friends_.frnnet. ~ dta$social_ent + class, data = dta))[[4]][30],3)`, p = `r round(summary(lm(dta$total_num_friends_.frnnet. ~ dta$social_ent + class, data = dta))[[4]][31],3)`,p = `r round(summary(lm(dta$total_num_friends_.frnnet. ~ dta$social_ent + class, data = dta))[[4]][32],3)`, p = `r round(summary(lm(dta$total_num_friends_.frnnet. ~ dta$social_ent + class, data = dta))[[4]][36],3)` respectively) predicts more friends (r = `r round(summary(lm(dta$total_num_friends_.frnnet. ~ dta$social_ent + class, data = dta))[[4]][3],3)`, r = `r round(summary(lm(dta$total_num_friends_.frnnet. ~ dta$social_ent + class, data = dta))[[4]][4],3)`, r = `r round(summary(lm(dta$total_num_friends_.frnnet. ~ dta$social_ent + class, data = dta))[[4]][5],3)`, r = `r round(summary(lm(dta$total_num_friends_.frnnet. ~ dta$social_ent + class, data = dta))[[4]][9],3)` respectively)**, and by association likely suggests higher social entropy (given previous results tying social entropy to number of friends). Again, **an insignificant (p = `r round(summary(lm(dta$total_num_friends_.frnnet. ~ dta$social_ent + class, data = dta))[[4]][29],3)`) negative (r = `r round(summary(lm(dta$total_num_friends_.frnnet. ~ dta$social_ent + class, data = dta))[[4]][2],3)`) relationship appears between social entropy and number of friends**, confirming the previous results.
+
+### Gender Differences
+
+In addition to class, one might expect gender to have some impact on social networks. In this vein, it seems worthwhile to search and account for any differences that may result from gender.  
+<br>
+```{r}
+# plot boxplot of social entropy vs gender
+g <- ggarrange(boxexplore(dta$gender, dta$social_ent, "Gender", "Social Entropy"),
+               ncol = 1, nrow = 1)
+
+caption <- expression(""*bold("Figure 5")*"  Social Entropy by Gender")
+grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+```
+<br>
+<br>
+**Plotting social entropy by class reveals no clear variation across gender**. In fact, both the means and the spread of the data seem comparable.
+
+This lack of variation means that it is not necessary to perform any rigorous statistical test (ANOVA or otherwise) to assess the effect of gender alone on social entropy. Rather, due to the results being visually unremarkable, it may be best to avoid doing so to avoid potentially introducing Type I error. However, it may be interesting to examine the relationship of class, genderm and social entropy on number of friends&mdash;something that is not clearly apparent. This will serve to remove any impact that gender may have had on the class effect observed earlier, to confirm or refute the aforementioned results.  
+
+`r anovatbl(dta$total_num_friends_.frnnet. ~ dta$social_ent + class + gender, z = c("Social Entropy", "Class", "Gender"))`  
+
+This two-way ANOVA again fails to confirm  that number of friends varies based on social entropy (p = `r round(Anova(lm(dta$total_num_friends_.frnnet. ~ dta$social_ent + dta$class + dta$gender, data = dta), type = 3)[[4]][2],3)`; in this case, controlling for class and gender). However ANOVA uncovers a **significant variation in number of friends by class (p = `r round(Anova(lm(dta$total_num_friends_.frnnet. ~ dta$social_ent + dta$class + dta$gender, data = dta), type = 3)[[4]][3],3)`; when controlling for social entropy and gender) and by gender (p = `r round(Anova(lm(dta$total_num_friends_.frnnet. ~ dta$social_ent + dta$class + dta$gender, data = dta), type = 3)[[4]][4],3)`; when controlling for social entropy and class)**. A linear regression analysis can shed more light on the effects of specific gender.
+
+`r regtbl(dta$total_num_friends_.frnnet. ~ dta$social_ent + class + gender, z = c("Social Entropy", "Bio2", "Bio3", "MP1", "MP2", "PC1", "PC2", "PSI", "Male"))` 
+
+Linear regression analysis (using Bio1 as the standard of comparison for other classes and females as the standard of comparison for other genders) reveals that **when controlling for social entropy and class, being male significantly (p = `r round(summary(lm(dta$total_num_friends_.frnnet. ~ dta$social_ent + class + gender, data = dta))[[4]][40],3)`) predicts more friends (r = `r round(summary(lm(dta$total_num_friends_.frnnet. ~ dta$social_ent + class + dta$gender, data = dta))[[4]][10],3)`)**. The relationship between social entropy and number of friends was confirmed once again as insignificantly (p = `r round(summary(lm(dta$total_num_friends_.frnnet. ~ dta$social_ent + class + dta$gender, data = dta))[[4]][32],3)`) negative (r = `r round(summary(lm(dta$total_num_friends_.frnnet. ~ dta$social_ent + class + dta$gender, data = dta))[[4]][2],3)`). Interestingly, controlling for gender led to a change in which classes significantly predicted number of friends, with Bio2 and MP1 no longer significant (p = `r round(summary(lm(dta$total_num_friends_.frnnet. ~ dta$social_ent + class + gender, data = dta))[[4]][33],3)`, p= `r round(summary(lm(dta$total_num_friends_.frnnet. ~ dta$social_ent + class + gender, data = dta))[[4]][35],3)`respectively). **The positive correlation (r = `r round(summary(lm(dta$total_num_friends_.frnnet. ~ dta$social_ent + class + dta$gender, data = dta))[[4]][4],3)`) between Bio3 and number of friends remained significant (p = `r round(summary(lm(dta$total_num_friends_.frnnet. ~ dta$social_ent + class + dta$gender, data = dta))[[4]][34],3)`)** and relatively unchanged. **The positive correlation (r = `r round(summary(lm(dta$total_num_friends_.frnnet. ~ dta$social_ent + class + dta$gender, data = dta))[[4]][9],3)`) between PSI and number of friends also remained significant (p = `r round(summary(lm(dta$total_num_friends_.frnnet. ~ dta$social_ent + class + dta$gender, data = dta))[[4]][39],3)`) though the magnitude of the effect decreased slightly.**
+
+The change in the significance of Bio2's and MP1's correlations with number of friends when controlling for gender would suggest that the initial source of variation within this class was gender. Given that each of these classes was found to be significantly and positively correlated with number of friends and that being male was shown to be significantly and positively correlated to number of friends, one would expect to find that their compositions are disproportionately male. To check this, a bar graph of the gender distribution of each class (using the full data set, rather than just individuals within the filtered network) could be useful.  
+<br>
+```{r}
+# import metadata on classes
+class_dta <- read.csv("~/Dropbox (Personal)/Matt/Matt_Intro_Networks/ClassData.csv")
+class_dta_full <- class_dta[,c(1:3)]
+
+# graph barplot of number of students in each class (showing the gender composition of said classes)
+g <- ggplot(class_dta_full, aes(class, frequency, fill = gender, label = frequency)) +
+     geom_col() +
+     geom_bar(stat = "identity") +
+     geom_text(size = 3, position = position_stack(vjust = 0.5)) +
+     labs(x = "Class", y= "Number of Students") +
+     scale_x_discrete(labels = labels_Class) +
+     theme_classic() +
+     theme(plot.margin = unit(c(0.2,0.3,0.2,0.3), "cm"),
+           legend.position = c(.025, .975),
+           legend.justification = c("left", "top"),
+           legend.box.just = "right",
+           legend.background = element_rect(color= 'black', fill = alpha ('white', 0.75), linetype = 'solid', size = .285),
+           panel.grid.major.y = element_line(linetype = "dotted")) +
+     scale_fill_discrete(labels = labels_Gender, name = "Gender")
+
+caption <- expression(""*bold("Figure 6")*"  Distribution of Genders Among Classes")
+grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+```
+<br>
+<br>
+Checking the aforementioned theories reveals some unexpected results&mdash;Bio2 is made up of `r filter(class_dta, class == "2BIO2", gender == "F")[[3]]` females and `r filter(class_dta, class == "2BIO2", gender == "M")[[3]]` males. Contrary to expectations, the class is over 60% female. MP1 fits the expectations more clearly, with `r filter(class_dta, class == "MP", gender == "F")[[3]]` females and `r filter(class_dta, class == "MP", gender == "M")[[3]]` males.
+
+In the case of Bio3, it makes sense that significance remained when accounting for gender due to the opposite of the expected phenomenon&mdash;the class is disproportionately female, with `r filter(class_dta, class == "2BIO3", gender == "F")[[3]]` females and `r filter(class_dta, class == "2BIO2", gender == "M")[[3]]` males. Thus, accounting for gender, in which case female does not predict greater number of friends (but fewer), would not cancel a gender-based advantage. In this sense, Bio3 might  seem like an anomaly to the correlation between male gender and number of friends compared to female. However, there are likely other underlying factors that could explain the difference. For instance, Bio3 is one of the biggest class and the one with the most females.
+
+The case of PSI is another interesting one. It seems logical that account for gender decreased the strength of the positive correlation with number of friends since the class is predominantly male, with `r filter(class_dta, class == "PSI*", gender == "M")[[3]]` males and `r filter(class_dta, class == "PSI*", gender == "F")[[3]]`. Nevertheless, accounting for gender's contribution to number of friends, is not enough to cancel the large positive relationship within the class. We are left to assume some underlying factor within this class is driving this correlation with number of friends.
+
+These contradictory findings regarding the contributions of gender to social entropy and number of friends provides cause to assess the correlation between social entropy, scaled by gender, and number of friends. Though visualizing this social entropy across gender did not show much variation, there may be hidden patterns or differences that were lost in the simplicity of the plot.
+
+Before that however, it makes sense to examine the composition of the classes when considering only the participants who made it through the initial filtering process to exclude those who were not present in all of the networks in question.
+<br>
+```{r warning=FALSE}
+# filter class metadata for just those students included in the final data analysis (those present in all 4 networks)
+class_dta_filtered <- class_dta[,c(1:2, 4)]
+colnames(class_dta_filtered)[3] <- c('frequency')
+
+# graph barplot of number of students in each class (limited to those students present in all 4 networks; showing the gender composition of said classes)
+g <- ggplot(class_dta_filtered, aes(class, frequency, fill = gender, label = frequency)) +
+     geom_col() +
+     geom_bar(stat = "identity") +
+     geom_text(size = 3, position = position_stack(vjust = 0.5)) +
+     labs(x = "Class", y= "Number of Students") +
+     scale_x_discrete(labels = labels_Class) +
+     theme_classic() +
+     theme(plot.margin = unit(c(0.2,0.3,0.2,0.3), "cm"),
+           legend.position = c(.025, .975),
+           legend.justification = c("left", "top"),
+           legend.box.just = "right",
+           legend.background = element_rect(color= 'black', fill = alpha ('white', 0.75), linetype = 'solid', size = .285),
+           panel.grid.major.y = element_line(linetype = "dotted")) +
+     scale_fill_discrete(labels = labels_Gender, name = "Gender")
+
+caption <- expression(""*bold("Figure 7")*"  Distribution of Genders Among Filtered Classes")
+grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+```
+<br>
+<br>
+Taking a look at the filtered classes, the composition by gender matches the expected outcomes. Bio2 and MP1 appear to be predominantly male while Bio3 is predominantly female, explaining why Bio3 maintained a significant relationship with number of friends when accounting for gender. PSI on the other hand appears to have an equal number of males and females after filtering, explaining why the strength of the correlation decreased slightly, but not enough to render the relationship insignificant.
+
+However, these results introduce an extra reason to remain skeptical and cautious of all findings, given that the filtered dataset looks much different than the complete one. Though centrality measures and other calculations were conducted on the full dataset prior to filtration in order to minimize such concerns, there still remains some artificial noise in the data as a result of the clean-up process.
+<br>
+```{r warning=FALSE}
+# scale social entropy by gender
+sentsclbygn <- scale_within(dta, variable = "social_ent", within = "gender")
+
+# graph correlation of scaled social entropy vs number of friends (in friendship network)
+g <- ggarrange(corexplore(sentsclbygn$num_friends, sentsclbygn$social_ent, "Number of Friends", "Social Entropy (Scaled by Gender)"),
+               ncol = 1, nrow = 1)
+
+caption <- expression(""*bold("Figure 8")*"  Social Entropy (Scaled by Gender) Vs Number of Friends")
+grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+```
+<br>
+<br>
+Even **when scaled by gender, social entropy maintains an insignificant (p = `r p(sentsclbygn$total_num_friends_.frnnet., sentsclbygn$social_ent)`) relaionship with number of friends, although in this case that correlation is practically neutral (r = `r r(sentsclbygn$total_num_friends_.frnnet., sentsclbygn$social_ent)`)**. These results corroborate the disconnect  between social entropy and number of friends through an alternative approach, increasing confidence therein. The unexpected class distributions remain difficult to make sense of. However, all the data suggests that **even though gender and class may impact number of friends, their effects are not hiding some relationship between entropy and number of friends**.
+
+At the end of the day, this approach seems to have borught us to a roadblock. On one hand, these results alleviate some of our worries about what confounds the class structure within the dataset may be contributing as well as potentially significant confounds associated with gender. We now better understand the scale and direction of these intricacies. However, there doesn't seem to be an obvious step forward from here. Thus, we will shift our focus to the networks at large.
+
+### Network Modelling
+
+In order to develop a more informative model for the relationships of individuals across networks, a heatmap displaying the results of a partial correlation test controlling for each of the other included measures when assessing two variables could prove helpful. Such a test, would be similar to a multiple linear regression model incorporating each of the given measures.
+```{r}
+# create partial correlation matrix of all network centrality measures correlated against each other while controlling for all others at the same time
+centrality_pcor_matrix <- as.matrix(pcor(dta[,c("fb_deg","fb_cls","fb_egn","fb_bet","fb_pgrnk","frn_deg", "avg_of_inoutclose_frn","frn_bet","frn_pgrnk","int_bet","int_egn","int_cls", "int_deg","colocation_ent", "social_ent", "cln_deg", "cln_bet","cln_cls","cln_egn","cln_pgrnk")])[[1]])
+
+# name rows and columns of matrix for intuitive, legible labelling in plot
+rownames(centrality_pcor_matrix) <- 
+  colnames(centrality_pcor_matrix) <- 
+  c("Degree(FB)","Closeness(FB)","Eigenvector(FB)","Betweenness(FB)","PageRank(FB)","Degree(FN)","Mean Closeness(FN)","Betweenness(FN)","PageRank(FN)","Betweenness(I)","Eigenvector(I)","Closeness(I)","Degree(I)","Colocation Entropy(CN)","Social Entropy(I)","Degree(CN)","Betweenness(CN)","Closeness(CN)","Eigenvector(CN)","PageRank(CN)")
+
+pdf(file = NULL) #workaround to prevent automatic "heatmaply" plot
+sink("/dev/null") #workaround to prevent automatic "heatmaply" plot
+
+# plot heatmap of partial correlation matrix
+g <- ggheatmap(centrality_pcor_matrix,
+               distfun = "pearson",
+               hclust_method = "ward.D2",
+               color = cool_warm,
+               limits = c(-1,1),
+               k_col = 4,
+               k_row = 4)
+marplt <- plot.new()
+g <- ggarrange(g, marplt, ncol = 2, nrow = 1, widths = c(70,1))
+
+sink() #workaround to prevent automatic "heatmaply" plot
+invisible(dev.off()) #workaround to prevent automatic "heatmaply" plot
+
+caption <- expression(""*bold("Figure 9")*"  Network Measure Partial Correlations (Given Other Included Measures)")
+grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+```
+<br>
+<br>
+The above figure is quite difficult to decipher and does not seem to indicate much. Creating random and fixed effects models incorporating one network's degree measure against centrality measures from all other networks failed to reveal much either. When applying partial correlations, intra-network similarities between centrality measures seem to weaken quite a bit (as well as perhaps inter-network similarities). Perhaps this approach is too aggressive in that pitting different centrality measures from the same network against each other (by controlling for them) overcompensates for expected multicollinearity, effectively removing the underlying patterns which characterize centrality across different measures. In other words, many of the individual measures are too similar too each other. Thus, controlling across them removes the essence of what the data is measuring, rendering the numbers meaningless. Nevertheless, it is interesting that **friendship and interaction network measures group together more in this heatmap while colocation and Facebook network measures cluster together more, unlike the patterns of similarity witnessed in the earlier network measure correlations heatmap (Figure 2)**. **To account for different ways of measuring centrality within networks, perhaps the best approach is to create an average (or otherwise simplified) centrality score for each individual-network pair, based on normalized centrality measures**. First, this suspicion about mulicollinearity will be explored by calculating variance inflation factors for each centrality measure when predicting social entropy.
+<br>
+```{r}
+# create linear regression model to predict social entropy from the centrality measures available
+model <- lm(dta$social_ent ~ dta$fb_deg + dta$fb_cls + dta$fb_egn + dta$fb_bet + dta$fb_pgrnk + dta$total_num_friends_.frnnet. + dta$avg_of_inoutclose_frn + dta$frn_bet + dta$frn_pgrnk + dta$int_bet + dta$int_egn + dta$int_cls + dta$int_deg + dta$colocation_ent + dta$cln_deg + dta$cln_bet + dta$cln_cls + dta$cln_egn + dta$cln_pgrnk, data = dta)
+
+# run variance inflation factor (VIF) on the previous linear model
+vifresults <- vif(model)
+vifresults <- as.data.frame(vifresults)
+
+vifresults$measure <- c("Degree(FB)","Closeness(FB)","Eigenvector(FB)","Betweenness(FB)","PageRank(FB)","No. Friends(FN)","Mean Closeness(FN)","Betweenness(FN)","PageRank(FN)","Betweenness(I)","Eigenvector(I)","Closeness(I)","Degree(I)", "Colocation Entropy(CN)", "Degree(CN)", "Betweenness(CN)", "Closeness(CN)", "Eigenvector(CN)", "PageRank(CN)")
+
+vifresults$value <- vifresults$vifresults
+
+# plot variance inflation network results when run on the aforementioned model
+g <- ggplot(vifresults, aes(measure, value, label = round(value, digits = 1))) +
+     geom_col() +
+     geom_bar(stat = "identity", fill = "grey") +
+     geom_text(size = 3, position = position_stack(vjust = 0.5)) +
+     geom_text(aes(label=round(value, digits = 1)), position=position_dodge(width=0.9), vjust=212, size = 3) +
+     geom_text(aes(label=round(value, digits = 1)), position=position_dodge(width=0.9), vjust=245, size = 3) +
+     annotate("text", x = 8, y = 19, label = "1208", vjust = -0.5, size = 3) +
+     annotate("text", x = 9, y = 19.8, label = "1257.2", vjust = -0.5, size = 3) +
+     labs(x = "Measure", y= "Variance Inflation Factor") +
+     theme_classic() +
+     theme(plot.margin = unit(c(0.2,0.3,0.2,0.3), "cm"),
+           legend.position = "none",
+           panel.grid.major.y = element_line(linetype = "dotted"),
+           axis.text.x = element_text(angle = 45, vjust = 1, hjust=1)) +
+     coord_cartesian(ylim=c(0, 20)) +
+     geom_hline(yintercept=10, linetype='dashed', col = 'black') +
+     annotate("text", x = 9.5, y = 10, label = "Significant Collinearity", vjust = -0.5) +
+     geom_hline(yintercept=4, linetype='dashed', col = 'black') +
+     annotate("text", x = 9.5, y = 4, label = "Possible Collinearity", vjust = -0.5) +
+     geom_hline(yintercept=1, linetype='dashed', col = 'black') +
+     annotate("text", x = 9.5, y = 1, label = "No Collinearity", vjust = -0.5) +
+     geom_hline(yintercept=21, linetype='solid', col = 'black') +
+     scale_fill_discrete(labels = labels_Gender, name = "Gender")
+
+caption <- expression(""*bold("Figure 10")*"  Variance Inflation Factor of Network Measures When Predicting Social Entropy")
+grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+```
+<br>
+<br>
+Examining variance inflation factors for each network measure reveals **significant collinearity among several measures (colocation entropy, colocation degree, Facebook degree, colocation eigenvector, Facebook eigenvector, colocation pagerank, and Facebook pagerank) when predicting social entropy**. **Interaction degree in partiuclar revealed almost no collinearility, with other measures from the friendship and interaction networks similarly lower in collinearity as measured by variance inflation factor**. These results are fascinating for several reasons: not only do they imply that interaction network measures, from which social entropy is derived, are among the least collinear when modelling social entropy, but they also suggest that measures from one network tend to provide only a general reflection of popularity in other networks, not specific to or reflective of the nuances associatd with unique centrality measures. Instead, **looking at centrality in one network seem useful only as a distant, "blurred" view of popularity in others**.
+
+Though insightful, these results create a dilemma: while the large collinearity among measures from different networks would support the creation of some cumulative centrality measure for each network, the low collinearity between intra-network measures suggests that such an approach would remove much of the information present within the data. This is something which must be assessed and addressed before performing such a transformation.
+
+### Standardizing
+
+As an alternative approach to attempt to make comparisons of intra- and inter-network measures simpler, standardizing (z-scoring around a mean of 0 with a standard deviation of 1) of each measure was performed.
+
+```{r}
+# standardize the calculated data (network centrality measures, etc.)
+zdta <- dta[,1:7]
+zdta[, 8:ncol(dta)] <- scale(dta[,8:ncol(dta)])
+colnames(zdta) <- colnames(dta)
+
+# create partial correlation matrix of all standardized network centrality measures correlated against each other while controlling for all others at the same time
+centrality_pcor_matrix <- as.matrix(pcor(zdta[,c("fb_deg","fb_cls","fb_egn","fb_bet","fb_pgrnk","frn_deg", "avg_of_inoutclose_frn","frn_bet","frn_pgrnk","int_bet","int_egn","int_cls", "int_deg","colocation_ent","social_ent", "cln_deg","cln_bet","cln_cls","cln_egn","cln_pgrnk")])[[1]])
+
+# name rows and columns of matrix for intuitive, legible labelling in plot
+rownames(centrality_pcor_matrix) <- 
+  colnames(centrality_pcor_matrix) <- 
+  c("Degree(FB)","Closeness(FB)","Eigenvector(FB)","Betweenness(FB)","PageRank(FB)","Degree(FN)","Mean Closeness(FN)","Betweenness(FN)","PageRank(FN)","Betweenness(I)","Eigenvector(I)","Closeness(I)","Degree(I)","Colocation Entropy(CN)","Social Entropy(I)","Degree(CN)","Betweenness(CN)","Closeness(CN)","Eigenvector(CN)","PageRank(CN)")
+
+pdf(file = NULL) #workaround to prevent automatic "heatmaply" plot
+sink("/dev/null") #workaround to prevent automatic "heatmaply" plot
+
+# plot heatmap of partial correlation matrix
+g <- ggheatmap(centrality_pcor_matrix,
+               distfun = "pearson",
+               hclust_method = "ward.D2",
+               color = cool_warm,
+               limits = c(-1,1),
+               k_col = 4,
+               k_row = 4)
+marplt <- plot.new()
+g <- ggarrange(g, marplt, ncol = 2, nrow = 1, widths = c(70,1))
+
+sink() #workaround to prevent automatic "heatmaply" plot
+invisible(dev.off()) #workaround to prevent automatic "heatmaply" plot
+
+caption <- expression(""*bold("Figure 11")*"  Standardized Network Measure Partial Correlations (Given Other Included Measures)")
+grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+```
+<br>
+<br>
+Though standardization should not affect general correlations (and it in fact does not, upon performing such checks), it does seem to drastically change the partial correlations between network measures. Partial correlations seem to be some kind of exception to the rule. The standardized partial correlation heatmap of network measures looks much more random than the previously shown simple correlaton heatmap (Figure 2) and the previous, unstandardized partical correlation heatmap (Figure 9) even. Still, **clustering largely maintains centrality measures from the same network together** with few exceptions (i.e. colocation network eienvector is clustered with Facebook measures; Facebook closeness and pagerank, interaction network [social] entropy, and colocation network [colocation] entropy are sorted between colocation network and friendship network measures). **Standardized partial correlation seems to also create much more defined separation between networks, with all the networks seemingly equidistant from each other based on clustering**. This was not the case with the previous simple correlation (Figure 2).  
+<br>
+At this point, the data and its corresponding, calculated measures are beginning to seem quite overwhelming; their quantity and complexity makes it difficult to decipher the meaning of results or reach any intuition on relationships. There is too much collinearity to cleanly parse variables or measures for the purpose of isolating the important measures therein. As a result, simplifying the data while maintaining its features and robustness is key. The simplest way to do this might be averaging the different centrality scores for each network to create a single popularity value for each individual in each network, as mentioned earlier. However, this approach will likely prove too basic, reducing the data in a way that sacrifices a lot of useful information. A better technique may be running principal component analysis (PCA) or latent variable analysis, both of which should effectively reduce the dimensionality of the data and reveal more complex, hidden relationships among variables (or linear combinations thereof) than are observable otherwise.
+
+### Principal Component Analysis
+
+```{r}
+# select measures of standardized dataset to perform PCA on
+zdta.active <- zdta
+rownames(zdta.active) <- zdta.active$id
+zdta.active <-zdta.active[,c(8:12, 18:19, 22:23, 24, 35:39, 44, 54:58, 62:63)]
+
+# perform pca
+zdta.pca <- prcomp(zdta.active, scale = FALSE)
+
+# plot scree plot corresponding to PCA
+g <- fviz_eig(zdta.pca, main = "", addlabels = TRUE, barfill = "gray", barcolor = "gray")
+g <- ggpubr::ggpar(g,
+                   title = NULL,
+                   xlab = "Dimensions", ylab = "Percentage of Explained Variance",
+                   ggtheme = theme_classic()
+                   )
+caption <- expression(""*bold("Figure 12")*"  Scree Plot—Principal Component Analysis of Network Meassures")
+grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+```
+<br>
+<br>
+Principal component analysis (PCA) of the various calculated network measures corroborates that the data is quite complex. Nevertheless, **more than 40% of the model's variance can be captured in 2 dimensions, over 50% in 3 dimensions, and more than 70% in 5 dimensions**. **In 4 dimensions (the same number of dimensions as there are networks involved in this model), around 63% of variance is explained**. Exploring the network measures contributing to the 5 most revealing dimensions reasserts the relationship between the Facebook and friendship networks and the interaction and colocation networks, observed in the earlier correlation heatmaps (Figures 2 and 11). Furthermore, this **PCA affirms the distinction among the calculated centrality measures. It is clear that "popularity" differs across the included networks, and cannot be generalized across in-person and online interactions**.
+
+In order to reduce dimensionality and achieve more interpretable results, however, it makes sense to use PCA to reduce the network measures for each individual network into a single score (or the minimum reasonable number).
+<br>
+```{r}
+# group measures of standardized dataset based on corresponding network to perform PCA separately on
+zdta.active <- zdta
+rownames(zdta.active) <- zdta.active$id
+zdta.fb <-zdta.active[,c(8:12)]
+zdta.frn <-zdta.active[,c(18:19, 22:23, 63)]
+zdta.int <-zdta.active[,c(35:39)]
+zdta.cln <-zdta.active[,c(54:58)]
+
+# perform PCA on each network's centrality measures
+zdta.fb.pca <- prcomp(zdta.fb, scale = FALSE)
+zdta.frn.pca <- prcomp(zdta.frn, scale = FALSE)
+zdta.int.pca <- prcomp(zdta.int, scale = FALSE)
+zdta.cln.pca <- prcomp(zdta.cln, scale = FALSE)
+
+# plot scree plots for each network's performed PCA
+fb <- fviz_eig(zdta.fb.pca, main = "", addlabels = TRUE, barfill = "gray", barcolor = "gray")
+fb <- ggpubr::ggpar(
+                    fb,
+                    title = "Facebook Network",
+                    xlab = "Dimensions", ylab = "Variance Explained (%)",
+                    ggtheme = theme_classic()
+                    ) +
+                    labs(x = NULL, y = NULL) +
+                    expand_limits(y=c(0, 83))
+
+frn <- fviz_eig(zdta.frn.pca, main = "", addlabels = TRUE, barfill = "gray", barcolor = "gray")
+frn <- ggpubr::ggpar(
+                     frn,
+                     title = "Friendship Network",
+                     xlab = "Dimensions", ylab = "Variance Explained (%)",
+                     ggtheme = theme_classic()
+                     ) +
+                     labs(x = NULL, y = NULL) +
+                     expand_limits(y=c(0, 60))
+
+int <- fviz_eig(zdta.int.pca, main = "", addlabels = TRUE, barfill = "gray", barcolor = "gray")
+int <- ggpubr::ggpar(
+                     int,
+                     title = "Interaction Network",
+                     xlab = "Dimensions", ylab = "Variance Explained (%)",
+                     ggtheme = theme_classic()
+                     ) +
+                     labs(x = NULL, y = NULL) +
+                     expand_limits(y=c(0, 65))
+
+cln <- fviz_eig(zdta.cln.pca, main = "", addlabels = TRUE, barfill = "gray", barcolor = "gray")
+cln <- ggpubr::ggpar(
+                     cln,
+                     title = "Colocation Network",
+                     ggtheme = theme_classic()
+                     ) +
+                     labs(x = NULL, y = NULL) +
+                     expand_limits(y=c(0, 68))
+
+g <- ggarrange(fb, frn, int, cln,
+               ncol = 2, nrow = 2,
+               labels = "AUTO")
+
+g <- annotate_figure(g, left = textGrob("Percentage of Variance Explained", rot = 90, vjust = 1, gp = gpar(cex = 1.2)),
+                     bottom = textGrob("Dimensions", gp = gpar(cex = 1.2)))
+
+caption <- expression(""*bold("Figure 13")*"  Scree Plot—Principal Component Analysis of Individual Network Meassures")
+grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+
+```
+<br>
+<br>
+Separate PCAs for measures obtained within each network reveal that the Facebook network is the most easily reduced—sufficiently represented by 1 or 2 dimensions. As one would expect, this also seems to suggest that the Facebook network is the simplest of the bunch. The interaction and colocation networks follow, revealing similar levels of complexity captured by 2 or 3 dimensions. The friendship network clearly presents as the most complex network, requiring 3 or 4 dimensions to capture comparable amounts of variance.
+
+**Exploring the contributors to each of these principal components paints the first dimension as a relatively general measurement of centrality for each network, integrating each of the forms of centrality (degree, betweenness, closeness, eigenvector, and pagerank) to a similar degree.** Other dimensions reveal a much more selective image, heavily skewed by one or two centrality measures (or three in the case of the interaction network's second principal component). Given this intuition, **reducing each network's centrality measures to a single, all-inclusive "popularity" score may be a reasonable decision, even if only accounting for 50-60% of variance in some cases**.
+<br>
+```{r}
+# define a PCA-derived cumulative centrality value for each network according to the greatest contributing dimension determined by PCA
+fb <- get_pca_ind(zdta.fb.pca)
+zdta$fb_pca1 <- fb$coord[,1]
+frn <- get_pca_ind(zdta.frn.pca)
+zdta$frn_pca1 <- frn$coord[,1]
+int <- get_pca_ind(zdta.int.pca)
+zdta$int_pca1 <- int$coord[,1]
+cln <- get_pca_ind(zdta.cln.pca)
+zdta$cln_pca1 <- cln$coord[,1]
+```
+<br>
+<br>
+Following this simplification of the network centrality measures, another correlation heatmap can show the relationship between popularity in each network and other, more interpretable network features.
+<br>
+```{r}
+# create a matrix of correlations between cumulative, PCA-derived centralities and behavioral measures (correlated against each other)
+centrality_correlation_matrix <- cor(zdta[,c("fb_pca1", "frn_pca1", "int_pca1", "cln_pca1", "num_fb_friends", "gender_ratio_fb", "mutual_friendships", "unreciprocated_friendships_.reported_by_subject.", "unreciprocated_friendships_.reported_by_others.",  "gender_ratio_frn", "int_time", "group_ints", "conv_partners", "gender_ratio_ints", "friend_int_cent_diff", "colocations_.total_subjects_colocated_with.", "total_time_spent_colocating")])
+
+# name rows and columns of matrix for intuitive, legible labelling in plot
+rownames(centrality_correlation_matrix) <- 
+  colnames(centrality_correlation_matrix) <- 
+  c("Facebook Centrality (FB)","Friendship Centrality (FN)", "Interaction Centrality(I)", "Colocation Centrality (CN)", "No. Facebook Friends (FB)", "Facebook Gender Ratio (FB)", "Mutual Friendships (FN)", "Unreciprocated Friendships (Out; FN)", "Unreciprocated Friendships(Fn)", "Friendship Gender Ratio (FN)", "Interaction Time (I)", "Group Interactions (I)", "Conversation Partners (I)", "Interaction Gender Ratio (I)", "Interaction Centrality Difference (I)", "Subjects Colocated (CN)", "Time Colocating (CN)")
+
+pdf(file = NULL) #workaround to prevent automatic "heatmaply" plot
+sink("/dev/null") #workaround to prevent automatic "heatmaply" plot
+
+# plot heatmap of centrality/behavior-measure correlations
+g <- ggheatmap(centrality_correlation_matrix,
+               distfun = "pearson",
+               dendogram = c("none"),
+               hclust_method = "ward.D2",
+               color = cool_warm,
+               limits = c(-1,1),
+               k_col = 4,
+               k_row = 4,
+               trace = "none")
+
+marplt <- plot.new()
+g <- ggarrange(g, marplt, ncol = 2, nrow = 1, widths = c(70,1))
+
+sink() #workaround to prevent automatic "heatmaply" plot
+invisible(dev.off()) #workaround to prevent automatic "heatmaply" plot
+
+caption <- expression(""*bold("Figure 14")*"  Network Centrality and Feature Correlations")
+grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+```
+<br>
+<br>
+Though this set of correlations reveals some interesting relationships between centrality and behavioral patterns, it is still slightly too convoluted to achieve clear and meaningful results. **It is interesting that all the network's cumulative centrality measures hang together with the exception of the interaction network's.** **In general, the interaction network's measures seem to lump together, despite the rest of the netwokr measures appearing fairly mixed among each other, even across networks.** Still, the data is too complex to reach a solid conclusion. Latent variable analysis, or clustering more generally, should achieve the remainder of the desired simplification.
+
+### Clustering
+
+#### Latent Profile Analysis (LPA) {.tabset}
+
+The goal of implementing latent variable analysis (in the form of latent profile analysis [LPA]) is to separate groups of subjects based on their network centralities, detecting different versions of "popularity" and/or different patterns of social behavior in the process.
+
+Given that there is no presumed/hypothesized operating model or any clear groupings to test with LPA, plotting Bayesian Information Criteria (BIC) for the possible models will provide us with the best path to explore. Two general approaches will be attempted: the first, grouping subjects based only on their simplified network centrality scores to isolate differences across networks, and the second, including centrality measures alongside other socio-behavioral features.
+```{r include=FALSE}
+full_mod <- zdta
+rownames(full_mod) <- full_mod$id
+full_mod <-full_mod[,c(8:12, 18:19, 22:23, 24, 35:39, 44, 54:58, 62:63)]
+
+fullest_mod <- zdta
+rownames(fullest_mod) <- fullest_mod$id
+fullest_mod <-fullest_mod[,c(8:67)]
+
+fuller_mod <- zdta
+rownames(fuller_mod) <- fuller_mod$id
+fuller_mod <-fuller_mod[,c(64:67, 44, 62, 8:12, 18:19, 22:23, 24, 35:39, 54:58, 63)]
+
+simple_mod <- zdta
+rownames(simple_mod) <- simple_mod$id
+simple_mod <-simple_mod[,c(64:67, 13:17, 24:34, 40:53, 59:62)]
+
+full_BIC <- mclustBIC(full_mod)
+fullest_BIC <- mclustBIC(fullest_mod)
+fuller_BIC <- mclustBIC(fuller_mod)
+simple_BIC <- mclustBIC(simple_mod)
+
+#plot(full_BIC)
+#plot(fullest_BIC)
+#plot(fuller_BIC)__mod_
+#plot(simple_BIC)
+
+summary(full_BIC)
+summary(fullest_BIC)
+summary(fuller_BIC)
+summary(simple_BIC)
+
+full_BIC_mod <- Mclust(full_mod, modelNames = "VVI", G = 4)
+summary(full_BIC_mod)
+```
+<br>
+<br>
+Several BIC analyses with different combinations of variables produced only one useful model, apparent when incorporating the original series of centrality and entropy measures. In this case, **BIC revealed that the preeminent LPA model consists of 4 clusters in a diagonal orientation with varying volume and varying shape**. **Running this model created clusters of 18, 3, 23, and 35 respectively.**
+
+Integrate Completed Likelihood (ICL) criteria is another method to determine the best fitting model for a series of data. While BIC and ICL are similar, the latter imposes a penalty for models with greater entropy or uncertainty. This alternative algorithm will be run to ensure the best LPA approach from the outset.
+```{r include=FALSE}
+full_ICL <- mclustICL(full_mod)
+fullest_ICL <- mclustICL(fullest_mod)
+fuller_ICL <- mclustICL(fuller_mod)
+simple_ICL <- mclustICL(simple_mod)
+
+plot(full_ICL)
+plot(fullest_ICL)
+plot(fuller_ICL)
+plot(simple_ICL)
+
+summary(full_ICL)
+summary(fullest_ICL)
+summary(fuller_ICL)
+summary(simple_ICL)
+
+#mclustBootstrapLRT(full_mod, modelName = "VVI")
+```
+<br>
+<br>
+**ICL corroborates the results of BIC, suggesting that the included subjects fit into 4 clusters.** This makes sense when considering that our data includes 4 networks and their corresponding centrality measures. However, the hope is that this LPA will reveal something more interesting than just that. Since people who are central in one network are likely central in other networks as well, there is a decent chance that the 4 clusters generated are more enlightening. Plotting these profiles should make any such findings clear(er). 
+
+##### Network/Behavioral Features
+
+```{r}
+zdta <- merge(full_BIC_mod$classification, zdta, by.x="row.names", by.y="id")
+colnames(zdta)[1:2] <- c("id", "lpa_group")
+zdtabygrp <- aggregate(zdta, by = list(zdta$lpa_group), FUN = mean)
+zdtabygrp <- zdtabygrp[1:4, c(3, 10:69)]
+colnames(zdtabygrp) <- c("group", "Degree (FB)", "betweenness (FB)", "Closeness (FB)", "Eigenvector (FB)", "Pagerank (FB)", "Friends (FB)", "Male Friends (FB)", "Female Friends (FB)", "Unknown Friends (FB)", "Gender Ratio (FB)", "Degree (FN)", "betweenness (FN)", "In-Closeness (FN)", "Out-Closeness (FN)", "Eigenvector (FN)", "Pagerank (FN)", "Friends (FN)", "Friends Reported", "Others Reporting", "Mutual Friendships", "Uncreciprocated (Subject)", "Unreciptocated (Others)", "Male Friends (FN)", "Female Friends (FN)", "Unknown Friends (FN)", "Gender Ratio (FN)", "Friend Centrality", "Degree (I)", "betweenness (I)", "Closeness (I)", "Eigenvector (I)", "Pagerank (I)", "Interactions", "Interaction Time", "Group Interactions", "Conversation Partners", "Social Entropy", "Male Interactions", "Female Interactions", "Unknown Interactions", "Gender Ratio (I)", "Interaction Centrality", "Centrality Difference", "Friend Interactions", "Path Length Uw (I)", "Path Length W (I)", "Degree (CN)", "betweenness (CN)", "Closeness (CN)", "Eigenvector (CN)", "Pagerank (CN)", "Colocations (Subjects)", "Colocations (Entries)", "Time Colocating", "Colocation Entropy", "Mean Closeness (FN)", "FB Centrality", "FN Centrality", "I Centrality", "CN Centrality")
+zdtabygrp <- zdtabygrp[1:4, c(1, 7:11, 19:28, 53:56, 34:47, 58:61)]
+longzdtabygrp <- melt(zdtabygrp, id.vars=c("group"))
+
+g <- ggplot(data=longzdtabygrp, aes(x=variable, y=value, group=group, colour=factor(group))) + 
+        geom_point() +
+        geom_line(size=0.75) +
+        scale_x_discrete(limits = c()) +
+        scale_y_continuous(breaks = seq(-3, 5, by=1), limits = c(-3, 5)) +
+        labs(x = "Network Measure", y = "Mean Standardized Score") +
+        theme_classic() +
+        theme(axis.text.x = element_text(angle = 55, hjust = 1),
+              plot.margin = unit(c(0.2,0.3,0.2,0.3), "cm"),
+              legend.position = c(.025, .975),
+              legend.justification = c("left", "top"),
+              legend.box.just = "right",
+              legend.background = element_rect(color= 'black', fill = alpha ('white', 0.75), linetype = 'solid', size = .285),
+              legend.direction = "horizontal") +
+        scale_colour_discrete(labels = c("1", "2", "3", "4"), name = "Group")
+
+g <- ggarrange(g,
+               ncol = 1, nrow = 1)
+
+caption <- expression(""*bold("Figure 15")*"  Parallel Coordinate Plot—Network/Behavioral Features")
+grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+```
+<br>
+<br>
+Exploring the different groups' profiles across the features of their social behavior reveals the differences that distinguish these groups. The **subjects could be separated into one group marked by normal colocations and interactions, but high number and quality of facebook and in-person friendships, particularly female friends and remarkably mutual (perhaps a very close group of female friends; 1), a group with high colocations and interactions, but low entropy in their social behaviors and slightly unpopular based on their online and in-person friendship parameters (2), another group which seems relatively unpopular in terms of in-person friendship, but average otherwise (Facebook friends, colocations, and interactions; 3), and a final group, around average regarding all metrics (4)**.
+
+Looking at these groups through the lens of just their PCA-derived centrality measures, the **subjects were divided into a group with low centrality in all networks, only slightly lower than average in terms of interactions and colocations, but much lower than average with respect to friendship and Facebook centrality (1); a group with above average centrality in all networks except colocation, and enormously above average with respect to interactions (2); one with around average centrality in all networks except friendship, where the group exceeded the average centrality by quite a bit (3), and a final group with above average Facebook and colocation centrality, but average friendship slighltly below average interaction centrality (4)**.
+
+##### Centrality Measures
+
+```{r warning=FALSE}
+zdtabygrp <- aggregate(zdta, by = list(zdta$lpa_group), FUN = mean)
+zdtabygrp <- zdtabygrp[1:4, c(3, 10:69)]
+colnames(zdtabygrp) <- c("group", "Degree (FB)", "betweenness (FB)", "Closeness (FB)", "Eigenvector (FB)", "Pagerank (FB)", "Friends (FB)", "Male Friends (FB)", "Female Friends (FB)", "Unknown Friends (FB)", "Gender Ratio (FB)", "Degree (FN)", "betweenness (FN)", "In-Closeness (FN)", "Out-Closeness (FN)", "Eigenvector (FN)", "Pagerank (FN)", "Friends (FN)", "Friends Reported", "Others Reporting", "Mutual Friendships", "Uncreciprocated (Subject)", "Unreciptocated (Others)", "Male Friends (FN)", "Female Friends (FN)", "Unknown Friends (FN)", "Gender Ratio (FN)", "Friend Centrality", "Degree (I)", "betweenness (I)", "Closeness (I)", "Eigenvector (I)", "Pagerank (I)", "Interactions", "Interaction Time", "Group Interactions", "Conversation Partners", "Social Entropy", "Male Interactions", "Female Interactions", "Unknown Interactions", "Gender Ratio (I)", "Interaction Centrality", "Centrality Difference", "Friend Interactions", "Path Length Uw (I)", "Path Length W (I)", "Degree (CN)", "betweenness (CN)", "Closeness (CN)", "Eigenvector (CN)", "Pagerank (CN)", "Colocations (Subjects)", "Colocations (Entries)", "Time Colocating", "Colocation Entropy", "Mean Closeness (FN)", "FB Centrality", "FN Centrality", "I Centrality", "CN Centrality")
+zdtabygrp <- zdtabygrp[1:4, c(1:6, 12:15, 57, 16:17, 29:33, 48:52)]
+longzdtabygrp <- melt(zdtabygrp, id.vars=c("group"))
+
+g <- ggplot(data=longzdtabygrp, aes(x=variable, y=value, group=group, colour=factor(group))) + 
+        geom_point() +
+        geom_line(size=0.75) +
+        scale_x_discrete(limits = c()) +
+        scale_y_continuous(breaks = seq(-2, 5, by=1), limits = c(-2, 5)) +
+        labs(x = "Network Measure", y = "Mean Standardized Score") +
+        theme_classic() +
+        theme(axis.text.x = element_text(angle = 55, hjust = 1),
+              plot.margin = unit(c(0.2,0.3,0.2,0.3), "cm"),
+              legend.position = c(.025, .975),
+              legend.justification = c("left", "top"),
+              legend.box.just = "right",
+              legend.background = element_rect(color= 'black', fill = alpha ('white', 0.75), linetype = 'solid', size = .285),
+              legend.direction = "horizontal") +
+        scale_colour_discrete(labels = c("1", "2", "3", "4"), name = "Group")
+
+
+g <- ggarrange(g,
+               ncol = 1, nrow = 1)
+
+caption <- expression(""*bold("Figure 16")*"  Parallel Coordinate Plot—Centrality Measures")
+grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+```
+<br>
+<br>
+Examining these groups in terms of their comprehensive network centrality measures directly, rather than their PCA-derived counterparts or network features reveals **one group with above average centrality across the Facebook and friendship networks and more average centralities across the interaction and colocation networks (1), another group with below average facebook centrality, average friendship ranking (except Pagerank, suggesting a tight-knit group with limited influence beyond this small circle; 2), a group with average Facebook, interaction, and colocation centralities, but below average friendship centralities (3), and a group around average across the board (4)**.
+
+#### Structural Equation Modeling (SEM)
+
+An alternative method would be to focus on the networks themselves rather than individuals&mdash;the relationships between the networks rather than the features that separate or connect subjects. Confirmatory factor analysis (CFA) is a form of structural equation modeling (SEM) which can be used to detect (and measure significance of) relationships between measured variables and the latent constructs they compose. In this case, different network centrality measures would be used as independent variables contributing to the dependent, latent variable that is the network from which those measures were derived.
+<br>
+```{r warning=FALSE}
+semtbl <- function (modelfit, operator, extra = NULL)
+{invisible(capture.output(r <- subset(summary(modelfit, fit.measures = TRUE)[[2]], op == operator)))
+r[c(5:8)] <- round(r[c(5:8)], 3)
+r$lhs <- paste(r$lhs, r$op)
+if (!is.null(extra)) {
+  r <- tail(r, extra)
+}
+for (n in 1:nrow(r)) {
+  if (n < nrow(r)) {
+    if (r$lhs[n] == r$lhs[n+1]) {
+      r$lhs[n+1] = ""
+    }
+    if (n+1 < nrow(r)) {
+      if (r$lhs[n] == r$lhs[n+2]) {
+        r$lhs[n+2] = ""
+      }
+    }
+  }
+}
+rownms <- r[c(1:nrow(r)), 1]
+r <- r[c(3,5:8)]
+rownames(r) <- NULL
+colnames(r) = c("Independent Variable", "Estimate", "Standard Error", "Z-Value", "P-Value")
+rownames(r) <- NULL
+r %>%
+  mutate(`Dependent Variable` = rownms,
+        `Independent Variable` = cell_spec(`Independent Variable`, "html", bold = ifelse(`P-Value` < 0.05, T, F)),
+        `Estimate` = cell_spec(`Estimate`, "html", color = ifelse(`P-Value` < 0.05, "forestgreen", "indianred"), bold = ifelse(`P-Value` < 0.05, T, F)))%>%
+  dplyr::select(`Dependent Variable`, `Independent Variable`, `Estimate`, `Standard Error`, `Z-Value`, `P-Value`) %>%
+  kable("html", escape = F, align = c("r", "c", "c", "c", "c", "c")) %>%
+  kable_styling("striped", full_width = F)}
+
+social.model <- ' # regressions
+                    # Facebook ~ fb_deg + fb_bet + fb_cls + fb_egn + fb_pgrnk
+                    # Friendship ~ frn_deg + frn_bet + frn_in_cls + frn_out_cls + frn_egn + frn_pgrnk
+                    # Interaction ~ int_deg + int_bet + int_cls + int_egn + int_pgrnk
+                    # Colocation ~ cln_deg + cln_bet + cln_cls + cln_egn + cln_pgrnk
+                    # Facebook ~ Interaction + Colocation
+                    # Friendship ~ Interaction + Colocation
+                    
+                  # latent variable definitions
+                    Facebook =~ fb_deg + fb_bet + fb_cls + fb_egn + fb_pgrnk
+                    Friendship =~ frn_deg + frn_bet + frn_in_cls + frn_out_cls + frn_egn + frn_pgrnk
+                    Interaction =~ int_deg + int_bet + int_cls + int_egn + int_pgrnk
+                    Colocation =~ cln_deg + cln_bet + cln_cls + cln_egn + cln_pgrnk
+                  
+                  # covariances
+                    # Facebook ~~ Friendship
+                    # Colocation ~~ Interaction
+'
+
+fit <- cfa(social.model, data=zdta)
+#summary(fit, fit.measures = TRUE)
+
+labels <- list( Facebook = "Facebook Network", Friendship = "Friendship Network", Colocation = "Colocation Network", Interaction = "Interaction Network", fb_deg = "Degree (FB)", fb_bet = "betweenness (FB)", fb_cls = "Closeness (FB)", fb_egn = "Eigenvector (FB)", fb_pgrnk = "Pagerank (FB)", frn_deg = "Degree (FN)", frn_bet = "betweenness (FN)", frn_in_cls = "In-Closeness (FN)", frn_out_cls = "Out-Closeness (FN)", frn_egn = "Eigenvector (FN)", frn_pgrnk = "Pagerank (FN)", int_deg = "Degree (I)", int_bet = "betweenness (I)", int_cls = "Closeness (I)", int_egn = "Eigenvector (I)", int_pgrnk = "Pagerank (I)", cln_deg = "Degree (CN)", cln_bet = "betweenness (CN)", cln_cls = "Closeness (CN)", cln_egn = "Eigenvector (CN)", cln_pgrnk = "Pagerank (CN)")
+
+# g <- lavaanPlot(model = fit, labels = labels, graph_options = list(layout = "circo"), node_options = list(shape = "box", fontname = "Helvetica"), edge_options = list(color = "grey"), coefs = TRUE, sig = 0.05, stand = FALSE, covs = TRUE, digits = 2)
+
+g <- lavaanPlot(model = fit, labels = labels, graph_options = list(layout = "dot", rankdir = "LR"), node_options = list(shape = "box", fontname = "Helvetica"), edge_options = list(color = "grey"), coefs = TRUE, sig = 0.05, stand = FALSE, covs = TRUE, digits = 2)
+
+g <- export_svg(g)
+
+sem_plot <- image_read_svg(g, width = 5000)
+
+sem_plot <- image_ggplot(sem_plot, interpolate = TRUE)
+
+sem_plot = sem_plot + theme_void()
+
+g <- ggarrange(sem_plot, ncol = 1, nrow = 1)
+caption <- expression(""*bold("Figure 17")*"  Confirmatory Factor Analysis—Network Comparison")
+grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+```
+<br>
+<br>
+Note: Only significant values are visible. Regression coefficients are shown between each latent variable and its contributing variables. Covariances are shown between latent variables.
+```{r}
+# social.model <- ' 
+#             level: 1
+#                 # regressions
+#                   Facebook ~ fb_deg + fb_bet + fb_cls + fb_egn + fb_pgrnk
+#                   Friendship ~ frn_deg + frn_bet + frn_in_cls + frn_out_cls + frn_egn + frn_pgrnk
+#                   Interaction ~ int_deg + int_bet + int_cls + int_egn + int_pgrnk
+#                   Colocation ~ cln_deg + cln_bet + cln_cls + cln_egn + cln_pgrnk
+#                   
+#                 # latent variable definitions
+#                   Facebook =~ fb_deg + fb_bet + fb_cls + fb_egn + fb_pgrnk
+#                   Friendship =~ frn_deg + frn_bet + frn_in_cls + frn_out_cls + frn_egn + frn_pgrnk
+#                   Interaction =~ int_deg + int_bet + int_cls + int_egn + int_pgrnk
+#                   Colocation =~ cln_deg + cln_bet + cln_cls + cln_egn + cln_pgrnk
+#             level: 2
+#                 # regressions
+#                   Facebook ~ Interaction + Colocation
+#                   Friendship ~ Interaction + Colocation
+#                   
+#                 # latent variable definitions
+#                   Facebook =~ fb_deg + fb_bet + fb_cls + fb_egn + fb_pgrnk
+#                   Friendship =~ frn_deg + frn_bet + frn_in_cls + frn_out_cls + frn_egn + frn_pgrnk
+#                   Interaction =~ int_deg + int_bet + int_cls + int_egn + int_pgrnk
+#                   Colocation =~ cln_deg + cln_bet + cln_cls + cln_egn + cln_pgrnk
+#                 
+#                 # covariances
+#                   Facebook ~~ Friendship
+#                   Colocation ~~ Interaction
+# '
+# fit <- cfa(social.model, data = zdta, cluster = "cluster")
+# summary(fit, fit.measures = TRUE)
+
+social.model2 <- ' # regressions
+                    Facebook ~ Interaction + Colocation
+                    Friendship ~ Interaction + Colocation
+                    
+                  # latent variable definitions
+                    Facebook =~ fb_deg + fb_bet + fb_cls + fb_egn + fb_pgrnk
+                    Friendship =~ frn_deg + frn_bet + frn_in_cls + frn_out_cls + frn_egn + frn_pgrnk
+                    Interaction =~ int_deg + int_bet + int_cls + int_egn + int_pgrnk
+                    Colocation =~ cln_deg + cln_bet + cln_cls + cln_egn + cln_pgrnk
+'
+
+fit2 <- cfa(social.model2, data = zdta)
+# summary(fit2, fit.measures = TRUE)
+```
+To capture the relationships between the latent facebook and friendship network variables to combinations of the behavioral latent variables, regressions of these latent variables must be run:
+`r semtbl(fit2, "~")`
+Furthermore, some interesting covariances must be observed to account for independent variable relationships when connecting independent variables to dependent variables:
+`r semtbl(fit, "~~", 6)`
+**These results are consistent with the findings we have been collecting, suggesting a relationship between  the Facebook and friendship networks and another strong relationship between interaction and colocation.** Notably, SEM also highlights a **significant (p = 0.017) positive (r - 0.186) relationship between Facebook and colocation centrality**.
+
+#### K-Means Clustering {.tabset}
+
+Though different clustering algorithms (BIC, ICL) were tested earlier to ensure the optimum structure and quantity of groupings, these methods all fit under the umbrella of LPA. To examine whether this classification structure is an inherent fit for the data, an unrelated method will be tested: k-means clustering.  
+
+Again, we must first discover the optimal number of groups by which to cluster the data. The go-to way of doing so is called the "elbow point method." This method involves optimizing the amount of variation within each group by plotting the reduction in variation against the number of clusters (within group sum of squares [WSS] plot). The goal is to strike the right balance (somewhat subjective).
+<br>
+```{r}
+wssplotter <- function (data, nc=15, seed=1234) {
+  wss <- (nrow(data)-1)*sum(apply(data,2,var))
+  for (i in 2:nc){
+    set.seed(seed)
+    wss[i] <- sum(kmeans(data, centers=i)$withinss)}
+  
+  wssdta <- as.data.frame(wss)
+  wssdta[2] <- as.numeric(rownames(wssdta))
+  wssdta <- wssdta[c(2,1)]
+  colnames(wssdta) <- c("numclusters", "groupsumsquares")
+  
+  g <- ggplot(wssdta, aes(x=`numclusters`, y=`groupsumsquares`)) +
+        geom_point() +
+        geom_line() +
+        scale_x_continuous(breaks = seq(1, 15, by=1), limits = c(1, 15)) +
+        labs(x = "Number of Clusters", y = "Within Groups Sum of Squares") +
+        theme_classic() +
+        theme(plot.margin = unit(c(0.2,0.3,0.2,0.3), "cm"))
+  
+  g <- ggarrange(g,
+                  ncol = 1, nrow = 1)
+  g
+}
+
+wssdata <- zdta
+rownames(wssdata) <- zdta$id
+wssdata <- wssdata[c(9:64)]
+
+# g <- wssplotter(wssdata)
+g <- wssplotter(full_mod)
+
+caption <- expression(""*bold("Figure 18")*"  Within-Group Sum of Squares Plot")
+grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+```
+<br>
+<br>
+Typically, the optimal number of clusters is that after which there is little reduction of within-group variation with each added group. This creates a sort of "elbow" in the plot, from which the method gets its name. The final selection of the best model falls onto a human decision, which is a weakness of the approach, but it is simply being used here for comparison with the results of LPA. Since the "elbow" can often be arguable, it is best to select a few points which can reasonably be considered the "elbow" of the plot and examine each of the corresponding models to see if the results make any intuitive sense. In this case, their doesn't seem to be a defined "elbow" to the plot. The graph does not look like the ideal plot produced by k-means clustering, perhaps because the data is relatively complex and does not lend itself to clustering well. Nevertheless, **the "sweet spot," if one can call it that, seems to be 3 or 6 clusters**. Given the inconclusive nature of the results, it is best to examine more options.  
+
+In this case, alternative methods for finding the ideal number of clusters can be performed. The average silhouette method computes the ability of the clusters in each model to encapsulate the objects within it. The gap statistic method compares variation within clusters against a random distribution of data with no reasonable form of clustering. These are only a few of many possible options.
+
+##### Average Silhouette Method
+
+```{r message=FALSE, warning=FALSE}
+g <- fviz_nbclust(full_mod, kmeans, method = "silhouette", linecolor = "black")
+g <- g + labs(x = "Number of Clusters", y = "Average Silhouette Width") +
+          ggtitle("") +
+          theme_classic() +
+          theme(plot.margin = unit(c(0.2,0.3,0.2,0.3), "cm"))
+g <- ggarrange(g, ncol = 1, nrow = 1)
+caption <- expression(""*bold("Figure 19")*"  Average Silhouette Width By Cluster")
+grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+```
+
+##### Gap Statistic Method
+
+```{r}
+set.seed(123)
+gap_stat <- clusGap(full_mod, FUN = kmeans, nstart = 25,
+                    K.max = 10, B = 50, verbose=FALSE)
+g <- fviz_gap_stat(gap_stat, linecolor = "black")
+g <- g + labs(x = "Number of Clusters", y = "Gap Statistic") +
+          ggtitle("") +
+          theme_classic() +
+          theme(plot.margin = unit(c(0.2,0.3,0.2,0.3), "cm"))
+g <- ggarrange(g, ncol = 1, nrow = 1)
+caption <- expression(""*bold("Figure 20")*"  Gap Statistic By Cluster")
+grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+```
+
+##### 30 Extra Indices (from NBClust)
+
+```{r}
+pdf(file = NULL) #workaround to prevent automatic "NbClust" plot
+sink("/dev/null") #workaround to prevent automatic "NbClust" plot
+invisible(suppressMessages(capture.output(nbclustdta <- NbClust(data = full_mod, distance = "euclidean", min.nc = 2, max.nc = 15, method = "complete", index="all"))))
+sink() #workaround to prevent automatic "NbClust" plot
+dev.off() #workaround to prevent automatic "NbClust" plot
+
+nbclustdta <- as.data.frame(t(nbclustdta$Best.nc), stringsAsFactors = TRUE)
+nbclustdta <- as.data.frame(as.factor(nbclustdta$Number_clusters))
+nbclustdta <- as.data.frame(table(nbclustdta))
+
+g <-  ggplot(nbclustdta, aes(nbclustdta, Freq)) +
+      geom_col() +
+      geom_bar(stat = "identity", fill = "grey") +
+      theme_classic() +
+      theme(plot.margin = unit(c(0.2,0.3,0.2,0.3), "cm"),
+            legend.position = "none",
+            panel.grid.major.y = element_line(linetype = "dotted")) +
+      labs(x = "Number of Clusters", y= "Frequency of Optimal Designation Among All Indices") +
+      ggtitle("")
+
+g <- ggarrange(g, ncol = 1, nrow = 1)
+caption <- expression(""*bold("Figure 21")*"  Optimal Number of Clusters According to NBClust Indices")
+grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+# NbClust(data = full_mod, distance = "euclidean", min.nc = 2, max.nc = 15, method = "kmeans")
+# NbClust(data = full_mod, distance = "euclidean", min.nc = 2, max.nc = 15, method = "kmeans")
+# NbClust(data = full_mod, distance = "euclidean", min.nc = 2, max.nc = 15, method = "ward.D")
+# NbClust(data = full_mod, distance = "euclidean", min.nc = 2, max.nc = 15, method = "ward.D2")
+# NbClust(data = full_mod, distance = "euclidean", min.nc = 2, max.nc = 15, method = "single")
+# NbClust(data = full_mod, distance = "euclidean", min.nc = 2, max.nc = 15, method = "complete")
+# NbClust(data = full_mod, distance = "euclidean", min.nc = 2, max.nc = 15, method = "average")
+# NbClust(data = full_mod, distance = "euclidean", min.nc = 2, max.nc = 15, method = "mcquitty")
+# NbClust(data = full_mod, distance = "euclidean", min.nc = 2, max.nc = 15, method = "median")
+# NbClust(data = full_mod, distance = "euclidean", min.nc = 2, max.nc = 15, method = "centroid")
+```
+
+#### {.unlisted .unnumbered}
+
+The results of different clustering validation techniques seem to vary quite a bit. Besides the individual cluster optimization results shown, the NbClust package was used to test clustering schemes using 30 different indices (Figure 21). 5 indices suggested 2 clusters, 5 suggested 3,  and 8 suggested 5. As a result, **looking at all of the possibilities from 2-8 seems like the safest option, covering the range of possibilities suggested by the employed techniques**. To determine the best nymber of clusters, the data must be visualized according to the different ways it can be clustered. Given that the data in question does not fit into 2 dimensions, it can be plotted along the greatest 2 principle components as determined by PCA. However, this visualization technique would not explain the data in any meaningful way (given that the PCA-derived dimensions are not intuitive measures of observable network features), such that we could determine the best number of clusters. Instead, the groups will be graphed on account of their network features and centralities as was done with LPA in the previous section.
+<br>
+```{r warning=FALSE}
+k <- kmeans(wssdata, centers = 4, nstart = 25)
+kdta <- merge(as.data.frame(k$cluster), zdta, by.x="row.names", by.y="id")
+cldta <- kdta
+colnames(cldta)[1:2] <- c("id", "k_cluster")
+rownames(cldta) <- cldta$id
+  
+kplot <- function(data, numclust, cap) {
+  k <- kmeans(data, centers = numclust, nstart = 25)
+  kdta <- merge(as.data.frame(k$cluster), zdta, by.x="row.names", by.y="id")
+  colnames(kdta)[1:2] <- c("id", "group")
+  kdtabygrp <- aggregate(kdta, by = list(kdta$group), FUN = mean)
+  kdtabygrp <- kdtabygrp[1:numclust, c(3, 10:69)]
+  colnames(kdtabygrp) <- c("group", "Degree (FB)", "betweenness (FB)", "Closeness (FB)", "Eigenvector (FB)", "Pagerank (FB)", "Friends (FB)", "Male Friends (FB)", "Female Friends (FB)", "Unknown Friends (FB)", "Gender Ratio (FB)", "Degree (FN)", "betweenness (FN)", "In-Closeness (FN)", "Out-Closeness (FN)", "Eigenvector (FN)", "Pagerank (FN)", "Friends (FN)", "Friends Reported", "Others Reporting", "Mutual Friendships", "Uncreciprocated (Subject)", "Unreciptocated (Others)", "Male Friends (FN)", "Female Friends (FN)", "Unknown Friends (FN)", "Gender Ratio (FN)", "Friend Centrality", "Degree (I)", "betweenness (I)", "Closeness (I)", "Eigenvector (I)", "Pagerank (I)", "Interactions", "Interaction Time", "Group Interactions", "Conversation Partners", "Social Entropy", "Male Interactions", "Female Interactions", "Unknown Interactions", "Gender Ratio (I)", "Interaction Centrality", "Centrality Difference", "Friend Interactions", "Path Length Uw (I)", "Path Length W (I)", "Degree (CN)", "betweenness (CN)", "Closeness (CN)", "Eigenvector (CN)", "Pagerank (CN)", "Colocations (Subjects)", "Colocations (Entries)", "Time Colocating", "Colocation Entropy", "Mean Closeness (FN)", "FB Centrality", "FN Centrality", "I Centrality", "CN Centrality")
+  kdtabygrp <- kdtabygrp[1:numclust, c(1, 7:11, 21:28, 53:56, 34:47, 58:61)]
+  longkdtabygrp <- melt(kdtabygrp, id.vars=c("group"))
+  
+  g <- ggplot(data=longkdtabygrp, aes(x=variable, y=value, group=group, colour=factor(group))) + 
+          geom_point() +
+          geom_line(size=0.75) +
+          scale_x_discrete(limits = c()) +
+          labs(x = "Network Measure", y = "Mean Standardized Score") +
+          theme_classic() +
+          theme(axis.text.x = element_text(angle = 55, hjust = 1),
+                plot.margin = unit(c(0.2,0.3,0.2,0.3), "cm"),
+                legend.position = c(.025, .975),
+                legend.justification = c("left", "top"),
+                legend.box.just = "right",
+                legend.background = element_rect(color= 'black', fill = alpha ('white', 0.75), linetype = 'solid', size = .285),
+                legend.direction = "horizontal") +
+          scale_colour_discrete(name = "Group")
+  
+  
+  g <- ggarrange(g,
+                 ncol = 1, nrow = 1)
+  
+  caption <- cap
+  grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+}
+
+# kplot(wssdata, 2, expression(""*bold("Figure 21")*"  K-Means Clustering Profiles-2 Clusters"))
+# kplot(wssdata, 3, expression(""*bold("Figure 21")*"  K-Means Clustering Profiles-3 Clusters"))
+kplot(wssdata, 4, expression(""*bold("Figure 22")*"  Parallel Coordiante Plot—K-Means Cluster Profiles (With 4 Clusters)"))
+# kplot(wssdata, 5, expression(""*bold("Figure 21")*"  K-Means Clustering Profiles-5 Clusters"))
+# kplot(wssdata, 6, expression(""*bold("Figure 21")*"  K-Means Clustering Profiles-6 Clusters"))
+# kplot(wssdata, 7, expression(""*bold("Figure 21")*"  K-Means Clustering Profiles-7 Clusters"))
+# kplot(wssdata, 8, expression(""*bold("Figure 21")*"  K-Means Clustering Profiles-7 Clusters"))
+```
+```{r warning=FALSE, include=FALSE}
+# Same plots, but zoomed into the greatest centrality principle components:
+
+#zooming in on PCA centrality values
+kplot <- function(data, numclust, cap) {
+  k <- kmeans(data, centers = numclust, nstart = 25)
+  kdta <- merge(as.data.frame(k$cluster), zdta, by.x="row.names", by.y="id")
+  colnames(kdta)[1:2] <- c("id", "group")
+  kdtabygrp <- aggregate(kdta, by = list(kdta$group), FUN = mean)
+  kdtabygrp <- kdtabygrp[1:numclust, c(3, 10:69)]
+  colnames(kdtabygrp) <- c("group", "Degree (FB)", "betweenness (FB)", "Closeness (FB)", "Eigenvector (FB)", "Pagerank (FB)", "Friends (FB)", "Male Friends (FB)", "Female Friends (FB)", "Unknown Friends (FB)", "Gender Ratio (FB)", "Degree (FN)", "betweenness (FN)", "In-Closeness (FN)", "Out-Closeness (FN)", "Eigenvector (FN)", "Pagerank (FN)", "Friends (FN)", "Friends Reported", "Others Reporting", "Mutual Friendships", "Uncreciprocated (Subject)", "Unreciptocated (Others)", "Male Friends (FN)", "Female Friends (FN)", "Unknown Friends (FN)", "Gender Ratio (FN)", "Friend Centrality", "Degree (I)", "betweenness (I)", "Closeness (I)", "Eigenvector (I)", "Pagerank (I)", "Interactions", "Interaction Time", "Group Interactions", "Conversation Partners", "Social Entropy", "Male Interactions", "Female Interactions", "Unknown Interactions", "Gender Ratio (I)", "Interaction Centrality", "Centrality Difference", "Friend Interactions", "Path Length Uw (I)", "Path Length W (I)", "Degree (CN)", "betweenness (CN)", "Closeness (CN)", "Eigenvector (CN)", "Pagerank (CN)", "Colocations (Subjects)", "Colocations (Entries)", "Time Colocating", "Colocation Entropy", "Mean Closeness (FN)", "FB Centrality", "FN Centrality", "I Centrality", "CN Centrality")
+  kdtabygrp <- kdtabygrp[1:numclust, c(1, 58:61)]
+  longkdtabygrp <- melt(kdtabygrp, id.vars=c("group"))
+  
+  g <- ggplot(data=longkdtabygrp, aes(x=variable, y=value, group=group, colour=factor(group))) + 
+          geom_point() +
+          geom_line(size=0.75) +
+          scale_x_discrete(limits = c()) +
+          labs(x = "Network Measure", y = "Mean Standardized Score") +
+          theme_classic() +
+          theme(axis.text.x = element_text(angle = 55, hjust = 1),
+                plot.margin = unit(c(0.2,0.3,0.2,0.3), "cm"),
+                legend.position = c(.025, .975),
+                legend.justification = c("left", "top"),
+                legend.box.just = "right",
+                legend.background = element_rect(color= 'black', fill = alpha ('white', 0.75), linetype = 'solid', size = .285),
+                legend.direction = "horizontal") +
+          scale_colour_discrete(name = "Group")
+  
+  
+  g <- ggarrange(g,
+                 ncol = 1, nrow = 1)
+  
+  caption <- cap
+  grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+}
+
+# kplot(wssdata, 2, expression(""*bold("Figure 21")*"  K-Means Clustering Profiles-2 Clusters"))
+# kplot(wssdata, 3, expression(""*bold("Figure 21")*"  K-Means Clustering Profiles-3 Clusters"))
+# kplot(wssdata, 4, expression(""*bold("Figure 21")*"  K-Means Clustering Profiles-4 Clusters"))
+# kplot(wssdata, 5, expression(""*bold("Figure 21")*"  K-Means Clustering Profiles-5 Clusters"))
+# kplot(wssdata, 6, expression(""*bold("Figure 21")*"  K-Means Clustering Profiles-6 Clusters"))
+# kplot(wssdata, 7, expression(""*bold("Figure 21")*"  K-Means Clustering Profiles-7 Clusters"))
+# kplot(wssdata, 8, expression(""*bold("Figure 21")*"  K-Means Clustering Profiles-7 Clusters"))
+```
+<br>
+<br>
+Even when manually visualizing each clustering option, choosing the optimal number of clusters is difficult. The best choice is unclear at best. **Comparing the k-means clustering profiles when fitting the data into 4 groups reveals different results than those seen earlier through LPA.** The two algorithms seem to be picking up on different features and patterns, hence forming completely distinct groupings with the same data.
+
+For the sake of completeness, the **groups created by 4-way k-means clustering include one group of 40 subjects (1), another with 4 (2), a group with 18 participants (3), and a cluster with 17 people (4)**. **One group exhibits around average behavioral features, hovering slightly below average in measures related to Facebook, slightly above average in those related to friendship, and slightly below average with respect to colocation and interaction measures (1). Another group appears to be below average with respect to Facebook and frienship measures, but only slightly below average in terms of colocation and interaction measures (2). This group's interaction patterns seem quite notable in that they seem to be the unpopular friends within the popular circles, perhaps some kind of mediators between higher centrality and lower centrality social circles. Given that the group is made up only 4 people, it is difficult to make such a presumption with any certainty. It could be that the individuals possess a few outlier variables that can't necessarily "average out" due to the small sample size. The third group presents as average in terms of Facebook and friendship measures, but above average with respect to interaction and colocation (3). The final group is about average in terms of all the network/behavioral features except for the Facebook-related values, where it shows above average features (4).** Separating these groups by their PCA-derived network measures, the separation of the groups is much clearer: **one group presents with about average Facebook and colocation centrality, but above average friendship and interaction centrality (1); another with extremely low Facebook centrality, extremely high friendship and interaction centrality, and slightly below average colocation centrality (2; note the small sample size of this group may be the reason for these extreme values); a third group with around average Facebook and friendship centralities, but above average interaction and colocation centralities (3); and a final group marked by above average Facebook centrality and below average centrality in all other networks (4)**.
+
+Due to the difficulty in discovering the optimal number of clusters for the k-means algorithm, a more robust approach seems necessary. Rather than the previously employed methods, which looked at the cluster sets separately, a more dynamic approach will be tested—one which factors how each individual's position among the given groups changes with each clustering. This gives a sense of which groups are the most stable among the possibilities.
+<br>
+```{r message=FALSE, include=FALSE}
+#the following code is adopted from https://towardsdatascience.com/10-tips-for-choosing-the-optimal-number-of-clusters-277e93d72d92
+tmp <- NULL
+for (k in 1:8){
+  tmp[k] <- kmeans(wssdata, k, nstart = 30)
+}
+df <- data.frame(tmp)
+# add a prefix to the column names
+colnames(df) <- seq(1:8)
+colnames(df) <- paste0("k",colnames(df))
+# get individual PCA
+df.pca <- prcomp(df, center = TRUE, scale. = FALSE)
+ind.coord <- df.pca$x
+ind.coord <- ind.coord[,1:2]
+df <- bind_cols(as.data.frame(df), as.data.frame(ind.coord))
+clustree(df, prefix = "k")
+# g <- g +
+#       geom_point() +
+#       geom_line(size=0.75) +
+#       scale_x_discrete(limits = c()) +
+#       scale_y_reverse(breaks = seq(1, 8), limits=c(9.5, 0.75))
+# 
+# g <- ggarrange(g,
+#                ncol = 1, nrow = 1)
+# 
+# caption <- expression(""*bold("Figure 22")*"  K-Means Cluster Tree")
+# grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+
+overlay_list <- clustree_overlay(df, prefix = "k", x_value = "PC1",
+                                 y_value = "PC2", plot_sides = TRUE)
+
+g1 <- overlay_list$x_side +
+      geom_point() +
+      geom_line(size=0.75) +
+      scale_x_discrete(limits = c()) +
+      scale_y_reverse(breaks = seq(1, 8), limits=c(9.5, 0.75)) +
+      labs(x = "Principal Component 1", y = "K-Clusters") +
+      theme(legend.position = "none") +
+      theme(plot.margin = unit(c(0.2,0.3,0.2,0.3), "cm"),
+            legend.justification = c("center", "bottom"),
+            legend.direction = "horizontal",
+            legend.box = "horizontal",
+            legend.box.margin = margin(),
+            panel.grid.major.y = element_line(linetype = "dotted")) +
+      scale_fill_discrete(name = "Cluster Quantity",
+                          guide = guide_legend(
+                          direction = "horizontal",
+                          title.position = "top")) +
+      scale_size_continuous(range = c(1, 12),
+                            name = "Cluster Size",
+                            guide = guide_legend(direction = "horizontal",
+                                                 title.position = "top")) +
+      scale_alpha_continuous(range = c(0, 1.0),
+                             name = "Proprotion Subjects Moved (In)",
+                             guide = guide_legend(direction = "horizontal", 
+                                                  title.position = "top")) +
+      scale_colour_hue(guide=FALSE)
+
+g2 <- overlay_list$y_side +
+      geom_point() +
+      geom_line(size=0.75) +
+      scale_x_discrete(limits = c()) +
+      scale_y_reverse(breaks = seq(1, 8), limits=c(9.5, 0.75)) +
+      labs(x = "Principal Component 2", y = NULL) +
+      theme(plot.margin = unit(c(0.2,0.3,0.2,0.3), "cm"),
+            legend.justification = c("center", "bottom"),
+            legend.direction = "horizontal",
+            legend.box = "horizontal",
+            legend.box.margin = margin(),
+            panel.grid.major.y = element_line(linetype = "dotted")) +
+      scale_fill_discrete(name = "Cluster Quantity",
+                          guide = guide_legend(
+                          direction = "horizontal",
+                          title.position = "top",
+                          override.aes = list(aes(fill = color),
+                                              size = 3))) +
+      scale_size_continuous(range = c(1, 12),
+                            name = "Cluster Size",
+                            guide = guide_legend(direction = "horizontal",
+                                                 title.position = "top")) +
+      scale_alpha_continuous(range = c(0, 1.0),
+                             name = "Proprotion Subjects Moved (In)",
+                             guide = guide_legend(direction = "horizontal", 
+                                                  title.position = "top")) +
+      scale_colour_hue(guide=FALSE)
+
+#function to extract the legend of a ggplot; source:
+#https://github.com/hadley/ggplot2/wiki/Share-a-legend-between-two-ggplot2-graphs
+
+get_legend<-function(a.gplot){
+  tmp <- ggplot_gtable(ggplot_build(a.gplot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend)}
+
+g2_legend <- get_legend(g2)
+
+g <- ggarrange(g1  + theme(legend.position="none"), g2 + theme(legend.position="none"),
+               ncol = 2, nrow = 1)
+```
+```{r}
+caption <- expression(""*bold("Figure 23")*"  K-Means Cluster Tree With Respect to Principal Components")
+grid.arrange(g2_legend, g, heights = c(2.2, 10), bottom = textGrob(caption, x = 0, hjust = 0))
+```
+<br>
+<br>
+Drawing out the cluster trees for the possible results of k-means clustering seems to confirm BIC and ICL's finding that **the data fits best into 4 clusters** (although the aforementioned suggestions were with respect to LPA). Though the results are open to interpretation, it appears that the **clusters formed when grouping the data into 4 divisions are more stable than those formed by the other possible k-means structures**. This is evinced by the fact that when moving from 4 to 5 clusters, no subjects move across clusters. Instead, the existing clusters split into several smaller groups or remain unchanged. Going from 4 groups to 5 groups is the only time when this proves to be the case, placing the 4-cluster approach unique among the options. Furthermore, the determined **clusters seem to be relatively well-distanced from one another, especially in the case of Principle Component 1, suggesting that the groups are sufficiently and observably distinct**.
+<br>
+```{r include=FALSE}
+# code from https://towardsdatascience.com/10-tips-for-choosing-the-optimal-number-of-clusters-277e93d72d92
+intern <- clValid(wssdata, nClust = 2:15, 
+              clMethods = c("hierarchical","kmeans","pam"), validation = "internal")
+# Summary
+# summary(intern)
+
+clValidTbl <- function (clvobject)
+{r <- optimalScores(clvobject)
+r[1] <- round(r[1], 3)
+rownms <- rownames(r)
+rownames(r) <- NULL
+colnames(r) = c("Optimal Score", "Optimal Clustering Method", "Optimal No. Clusters")
+r %>%
+  mutate(`Validation Measure` = rownms,
+        `Validation Measure` = cell_spec(`Validation Measure`, "html", bold = T))%>%
+  dplyr::select(`Validation Measure`, `Optimal Score`, `Optimal Clustering Method`, `Optimal No. Clusters`) %>%
+  kable("html", escape = F, align = c("r", "c", "c", "c")) %>%
+  kable_styling("striped", full_width = F)}
+```
+`r clValidTbl(intern)`
+
+It is important to note that hierarchical clustering into 2 groups (as seen in the Network Comparisons section, where the Facebook and friendship Networks were clustered together and the interaction and colocation networks were together) seems to be the optimal form of clustering. However, a K-Means and LPA approach remains valuable nonetheless due to the granularity of the results. Delving into these procedures is motivated by the desire to discover features of the clusters present within the data, rather than just general observations of correlation. This procedure is also better suited at understanding individual subjects and their differences rather than focusing on the networks themselves.
+<br>
+
+#### Visualizing Clusters and Further Feature Extraction {.tabset}
+
+Due to the difficulty in clustering the data and extracting features from those clusters, the composition of the clusters produced by different algorithms seems worth exploring. Are the groups created by k-means clustering and LPA similar? Do they pick up on similar features or profiles even though the parallel coordinate plots viewed earlier didn't show a clear connection? Another way of looking at the cluster profiles, aside from the parallel coordinate plots shown earlier, would be through a radar plot focused only on the PCA-derived network centralities (since more parameters would make the plot quite overwhelming). These might reveal similar/parallel profiles for certain groups across the two clustering algorithms.
+
+##### K-Means Clusters
+
+```{r message=FALSE, warning=FALSE, echo=FALSE, results='hide'}
+# # --------------
+# # part of this code from: https://towardsdatascience.com/10-tips-for-choosing-the-optimal-number-of-clusters-277e93d72d92
+# g <- ggRadar(cldta[c(2, 66:69)],
+#              aes(group = k_cluster),
+#              rescale = FALSE,
+#              legend.position = "none",
+#              size = 2,
+#              interactive = FALSE,
+#              use.label = TRUE) +
+#        geom_polygon(size = 1, alpha  = 0.5) +
+#        scale_y_discrete(breaks = NULL) + # don't show ticks
+#        theme(axis.text.x = element_text(size = 10)) +
+#        scale_fill_manual(values = rep("NA", nrow(cldta)))
+# # --------------
+
+cldtabykmeans <- aggregate(cldta[c(2, 66:69)], by = list(cldta$k_cluster), FUN = mean)
+cldtabykmeans <- cldtabykmeans[-2]
+
+g <- ggradar(cldtabykmeans,
+             values.radar = c("-8", "0", "8"),
+             grid.min = -8, grid.mid = 0, grid.max = 8,
+             group.point.size = 3,
+             axis.label.size = 4,
+             axis.labels=c("Facebook", "Friendship", "Interaction", "Colocation"),
+             legend.title = "K-Means Cluster",
+             legend.position = "left") +
+     theme(legend.text = element_text(size = 10),
+           legend.title=element_text(size=11),
+           legend.key = element_rect(fill = NA, color = NA),
+           legend.background = element_blank(),
+           legend.box = "vertical",
+           legend.margin=margin(),
+           legend.spacing.x = unit(0.01, 'cm'),
+           plot.margin = unit(c(0.2,0.3,0.2,0.3), "cm"))
+
+g <- ggarrange(g,
+               ncol = 1, nrow = 1)
+
+caption <- expression(""*bold("Figure 24")*"  K-Means Cluster Radar Plots")
+grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+```
+
+##### LPA Clusters
+
+```{r message=FALSE, warning=FALSE, echo=FALSE, results='hide'}
+cldtabylpa <- aggregate(cldta[c(3, 66:69)], by = list(cldta$lpa_group), FUN = mean)
+cldtabylpa <- cldtabylpa[-2]
+
+g <- ggradar(cldtabylpa,
+             values.radar = c("-8", "0", "8"),
+             grid.min = -8, grid.mid = 0, grid.max = 8,
+             group.point.size = 3,
+             axis.label.size = 4,
+             axis.labels=c("Facebook", "Friendship", "Interaction", "Colocation"),
+             legend.title = "LPA Cluster",
+             legend.position = "left") +
+     theme(legend.text = element_text(size = 10),
+           legend.title=element_text(size=11),
+           legend.key = element_rect(fill = NA, color = NA),
+           legend.background = element_blank(),
+           legend.box = "vertical",
+           legend.margin=margin(),
+           legend.spacing.x = unit(0.01, 'cm'),
+           plot.margin = unit(c(0.2,0.3,0.2,0.3), "cm"))
+         
+
+g <- ggarrange(g,
+               ncol = 1, nrow = 1)
+
+caption <- expression(""*bold("Figure 25")*"  LPA Cluster Radar Plots")
+grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+```
+
+#### {.tabset}
+
+Though the LPA-based radar plot certainly shows more of the differences being picked up on by the clustering algorithm, the difference between the groups isn't exactly intuitive.
+<br>
+Another way to compare the clustering results is to visualize the clusters overlaid on each other in space. This involves plotting individuals against their two greatest principle components.
+
+##### K-Means Clusters
+
+```{r}
+cldta$k_cluster <- factor(cldta$k_cluster)
+
+`K-Means Cluster` <- cldta$k_cluster
+labels_KCluster <- c(
+  "1" = expression(1),
+  "2" = expression(2),
+  "3" = expression(3),
+  "4" = expression(4)
+)
+
+full_mod.pca <- prcomp(full_mod, scale = FALSE)
+fullpca <- get_pca_ind(full_mod.pca)
+cldta$pca1 <- fullpca$coord[,1]
+cldta$pca2 <- fullpca$coord[,2]
+
+g <- ggplot(cldta, aes(x=pca1, y=pca2, color=factor(k_cluster))) +
+      geom_point() +
+      labs(x = "Principal Component 1", y = "Principal Component 2") +
+      scale_color_discrete(labels = labels_KCluster, name = "K-Means Cluster") +
+      scale_fill_discrete(guide = "legend", labels = labels_KCluster, name = "K-Means Cluster") +
+      theme_classic() +
+      theme(plot.margin = unit(c(0.2,0.3,0.2,0.3), "cm"))
+
+g <- ggarrange(g,
+               ncol = 1, nrow = 1)
+
+caption <- expression(""*bold("Figure 26")*"  K-Means Clusters in 2-D Space")
+grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+```
+
+##### LPA Clusters
+
+```{r}
+cldta$lpa_group <- factor(cldta$lpa_group)
+
+`LPA Group` <- cldta$lpa_group
+labels_LPAGroup <- c(
+  "1" = expression(1),
+  "2" = expression(2),
+  "3" = expression(3),
+  "4" = expression(4)
+)
+
+full_mod.pca <- prcomp(full_mod, scale = FALSE)
+fullpca <- get_pca_ind(full_mod.pca)
+cldta$pca1 <- fullpca$coord[,1]
+cldta$pca2 <- fullpca$coord[,2]
+
+g <- ggplot(cldta, aes(x=pca1, y=pca2, color=factor(lpa_group))) +
+      geom_point() +
+      labs(x = "Principal Component 1", y = "Principal Component 2") +
+      scale_color_discrete(labels = labels_LPAGroup, name = "LPA Group") +
+      scale_fill_discrete(guide = "legend", labels = labels_LPAGroup, name = "LPA Group") +
+      theme_classic() +
+      theme(plot.margin = unit(c(0.2,0.3,0.2,0.3), "cm"))
+
+g <- ggarrange(g,
+               ncol = 1, nrow = 1)
+
+caption <- expression(""*bold("Figure 27")*"  LPA Cluster in 2-D Space")
+grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+```
+
+#### {.tabset}
+
+Neither of these visualizations seems particularly great at revealing the differences or separation between groups.
+<br>
+Yet another method of visualization that may prove interesting is repeating the initial set of network graphs, highlighting cluster rather than class.
+
+##### K Means Clusters
+
+```{r message=FALSE, warning=FALSE, echo=TRUE, results='hide'}
+clnetexplore <- function(net, df, weight = NULL, directed = FALSE, nettitle) #where net is the edge list (the first two columns must be the vertices for each edge), df is the data frame with all the relevant data for each vertex (first column must be vertx id matching those in the edge list), and weight is the specific column of the net data frame which will be used to base darkness of lines 
+#NOTE: this function bases color on class and shape on gender (alter later if going to add other things)
+{
+  set.seed(2568)
+  
+  if (weight == FALSE) {NULL} else {grad <- colorRampPalette(c("grey100", "grey0"))
+  net$order = findInterval(weight, sort(weight))
+  }
+  
+  g <- graph_from_data_frame(d = net,
+                             vertices = df,
+                             directed = if (directed == TRUE) {TRUE} else {FALSE})
+  g <- ggnet2(g, color = V(g)$k_cluster, fill = V(g)$k_cluster, shape = V(g)$k_cluster, size = 2.5, alpha = .9,
+                             arrow.size = if (directed == TRUE) {3.5} else {0},
+                             arrow.gap = if (directed == TRUE) {.02} else {0},
+                             edge.color =  if (weight == FALSE) {"grey50"} else {grad(nrow(net))[net$order]}) +
+    geom_point(aes(shape = shape), size = 2.5, color = "white", fill = "white", alpha = .9) +
+    geom_point(aes(fill = color, color = color, shape = shape), size = 2.5, alpha = .2) +
+    geom_point(aes(fill = color, shape = shape), color ="black", size = 2.6, stroke = .3) +
+    scale_color_discrete(labels = labels_KCluster, name = "K-Means Cluster") +
+    scale_fill_discrete(guide = "legend", labels = labels_KCluster, name = "K-Means Cluster") +
+    scale_shape_manual(values = c(21, 21, 21, 21),
+                       labels = labels_KCluster,
+                       name = "K-Means Cluster",
+                       breaks = c("1", "2", "3", "4")) +
+    guides(shape = FALSE,
+           color = guide_legend(order = 2, nrow = 1, override.aes = list(aes(fill = color), size = 2.6)),
+           fill = FALSE) + 
+    theme(legend.box = "vertical",
+          legend.margin=margin())
+  g <- ggpubr::ggpar(
+                      g,
+                      title = nettitle)
+}
+
+g <- ggarrange(clnetexplore(fbnet, cldta, weight = FALSE, directed = FALSE, "     Facebook Network"),
+               clnetexplore(intnet, cldta, weight = intnet$weights, directed = FALSE, "     Interaction Network"),
+               clnetexplore(frnnet, cldta, weight = FALSE, directed = TRUE, "     Friendship Network"),
+               clnetexplore(colnet, cldta, weight = colnet$weights, directed = FALSE, "     Colocation Network"),
+               ncol = 2, nrow = 2,
+               labels = "AUTO",
+               common.legend = TRUE,
+               legend = "bottom")
+```
+```{r}
+caption <- expression(""*bold("Figure 28")*"  K-Means-Clustered Network Visualizations")
+grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+```
+
+##### LPA Clusters
+
+```{r message=FALSE, warning=FALSE, echo=TRUE, results='hide'}
+clnetexplore <- function(net, df, weight = NULL, directed = FALSE, nettitle) #where net is the edge list (the first two columns must be the vertices for each edge), df is the data frame with all the relevant data for each vertex (first column must be vertx id matching those in the edge list), and weight is the specific column of the net data frame which will be used to base darkness of lines 
+#NOTE: this function bases color on class and shape on gender (alter later if going to add other things)
+{
+  set.seed(2568)
+  
+  if (weight == FALSE) {NULL} else {grad <- colorRampPalette(c("grey100", "grey0"))
+  net$order = findInterval(weight, sort(weight))
+  }
+  
+  g <- graph_from_data_frame(d = net,
+                             vertices = df,
+                             directed = if (directed == TRUE) {TRUE} else {FALSE})
+  g <- ggnet2(g, color = V(g)$lpa_group, fill = V(g)$lpa_group, shape = V(g)$k_cluster, size = 2.5, alpha = .9,
+                             arrow.size = if (directed == TRUE) {3.5} else {0},
+                             arrow.gap = if (directed == TRUE) {.02} else {0},
+                             edge.color =  if (weight == FALSE) {"grey50"} else {grad(nrow(net))[net$order]}) +
+    geom_point(aes(shape = shape), size = 2.5, color = "white", fill = "white", alpha = .9) +
+    geom_point(aes(fill = color, color = color, shape = shape), size = 2.5, alpha = .2) +
+    geom_point(aes(fill = color, shape = shape), color ="black", size = 2.6, stroke = .3) +
+    scale_color_discrete(labels = labels_LPAGroup, name = "LPA Group") +
+    scale_fill_discrete(guide = "legend", labels = labels_LPAGroup, name = "LPA Group") +
+    scale_shape_manual(values = c(21, 21, 21, 21),
+                       labels = labels_KCluster,
+                       name = "K-Means Cluster",
+                       breaks = c("1", "2", "3", "4")) +
+    guides(shape = FALSE,
+           color = guide_legend(order = 2, nrow = 1, override.aes = list(aes(fill = color), size = 2.6)),
+           fill = FALSE) + 
+    theme(legend.box = "vertical",
+          legend.margin=margin())
+  g <- ggpubr::ggpar(
+                      g,
+                      title = nettitle)
+}
+
+g <- ggarrange(clnetexplore(fbnet, cldta, weight = FALSE, directed = FALSE, "     Facebook Network"),
+               clnetexplore(intnet, cldta, weight = intnet$weights, directed = FALSE, "     Interaction Network"),
+               clnetexplore(frnnet, cldta, weight = FALSE, directed = TRUE, "     Friendship Network"),
+               clnetexplore(colnet, cldta, weight = colnet$weights, directed = FALSE, "     Colocation Network"),
+               ncol = 2, nrow = 2,
+               labels = "AUTO",
+               common.legend = TRUE,
+               legend = "bottom")
+```
+```{r}
+caption <- expression(""*bold("Figure 29")*"  LPA-Clustered Network Visualizations")
+grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+```
+
+#### {.unlisted .unnumbered}
+
+Visualizing the LPA- and K-means-derived clusters within the available networks is reassuring—it reveals a good indication of the legitimacy of the employed clustering algorithms. The graphs above clearly present a pattern wherein individuals who have been clustered together by either algorithm appear relatively close together across networks 9and separate from other groups). Though the intricacies of the distinctions are not quite obvious or simple enough to reach meaningful conclusions from, the separation is there.
+
+```{r echo=FALSE, results = 'hide', message=FALSE, warning=FALSE, include=FALSE}
+cldta$lpa_group <- factor(cldta$lpa_group)
+cldta$k_cluster <- factor(cldta$k_cluster)
+
+`LPA Group` <- cldta$lpa_group
+labels_LPAGroup <- c(
+  "1" = expression(1),
+  "2" = expression(2),
+  "3" = expression(3),
+  "4" = expression(4)
+)
+
+`K-Means Cluster` <- cldta$k_cluster
+labels_KCluster <- c(
+  "1" = expression(1),
+  "2" = expression(2),
+  "3" = expression(3),
+  "4" = expression(4)
+)
+
+clnetexplore <- function(net, df, weight = NULL, directed = FALSE, nettitle) #where net is the edge list (the first two columns must be the vertices for each edge), df is the data frame with all the relevant data for each vertex (first column must be vertx id matching those in the edge list), and weight is the specific column of the net data frame which will be used to base darkness of lines 
+#NOTE: this function bases color on class and shape on gender (alter later if going to add other things)
+{
+#set.seed(427)
+#set.seed(1783)
+#set.seed(42799)
+set.seed(2568)
+
+if (weight == FALSE) {NULL} else {grad <- colorRampPalette(c("grey100", "grey0"))
+net$order = findInterval(weight, sort(weight))
+}
+
+g <- graph_from_data_frame(d = net,
+                           vertices = df,
+                           directed = if (directed == TRUE) {TRUE} else {FALSE})
+g <- ggnet2(g, color = V(g)$lpa_group, fill = V(g)$lpa_group, shape = V(g)$k_cluster, size = 2.5, alpha = .9,
+                           arrow.size = if (directed == TRUE) {3.5} else {0},
+                           arrow.gap = if (directed == TRUE) {.02} else {0},
+                           edge.color =  if (weight == FALSE) {"grey50"} else {grad(nrow(net))[net$order]}) +
+  geom_point(aes(shape = shape), size = 2.5, color = "white", fill = "white", alpha = .9) +
+  geom_point(aes(fill = color, color = color, shape = shape), size = 2.5, alpha = .2) +
+  geom_point(aes(fill = color, shape = shape), color ="black", size = 2.6, stroke = .3) +
+  scale_color_discrete(labels = labels_LPAGroup, name = "LPA Group") +
+  scale_fill_discrete(guide = "legend", labels = labels_LPAGroup, name = "LPA Group") +
+  scale_shape_manual(values = c(22, 21, 23, 24),
+                     labels = labels_KCluster,
+                     name = "K-Means Cluster",
+                     breaks = c("1", "2", "3", "4")) +
+  guides(shape = guide_legend(order = 1, override.aes = list(aes(shape = shape), size = 2.6, color = "black", stroke = .45)),
+         color = guide_legend(order = 2, nrow = 1, override.aes = list(aes(fill = color), size = 2.6)),
+         fill = FALSE) + 
+  theme(legend.box = "vertical",
+        legend.margin=margin())
+g <- ggpubr::ggpar(
+                    g,
+                    title = nettitle)
+}
+
+g <- ggarrange(clnetexplore(fbnet, cldta, weight = FALSE, directed = FALSE, "     Facebook Network"),
+               clnetexplore(intnet, cldta, weight = intnet$weights, directed = FALSE, "     Interaction Network"),
+               clnetexplore(frnnet, cldta, weight = FALSE, directed = TRUE, "     Friendship Network"),
+               clnetexplore(colnet, cldta, weight = colnet$weights, directed = FALSE, "     Colocation Network"),
+               ncol = 2, nrow = 2,
+               labels = "AUTO",
+               common.legend = TRUE,
+               legend = "bottom")
+
+caption <- expression(""*bold("Figure 28")*" TO BE REMOVED Clustered Network Visualizations")
+grid.arrange(g, bottom = textGrob(caption, x = 0, hjust = 0))
+```
+
+# Conclusion
+
+Throughout the exploratory analysis, the most significant and repeated finding observed seemed to be the connection within relational networks (among Facebook and in-person friendship networks) as well as that within behavioral networks (among interaction and colocation networks). Though these groups of networks significantly correlated across media (online vs. offline), only the Facebook and colocation networks did the same across relational-behavioral lines. As a result, it seems fair to conclude that while mere presence in a shared space with lots of people and/or central people is enough to predict the same of an individual in online spaces, more complex behaviors seem to underly offline friendships. It may be expected that colocation, especially when partially forced as in a school environment, does not correlate with self-reported friendship, but even interaction fails to achieve significance in this department. In other words, one's self-reported friendship network does not predict one's interactions just as one's interactions do not predict friendships. This might hint at underlying biases/impressions only being exaggerated or deepened via interaction. Though this study did not delve deep enough to establish causaul relationships, it seems that one can achieve a position of centrality or importance online by placing oneself among many others of influence in person (perhaps akin to networking). Becoming central in a network of offline friends is a much more difficult task which cannot be coeerced through interactions even.
+
+The study also revealed a few smaller, but notable observations. First, eigenvector centralities seemed to be the strongest centrality correlates across networks. These measures tended to cluster together even when that came at the cost of separating from their own networks' other centrality metrics. In addition, gender and class seemed to have some confounding effects on centrality, though not enough to seriously unstabilize our results. Male gender significantly predicted high centrality compared to female gender while being a part of the PSI (engineering) class or the Bio2 class provided an advantage in centrality networks when compared to other classes.
+<br>
+<br>

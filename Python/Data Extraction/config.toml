@@ -1,0 +1,80 @@
+# Configuration file for http request experiment package.
+# Written 2024.
+
+# [experiment]
+# # variables
+# concurrency = true
+# network = false
+# size = false
+# volume = false
+
+[package]
+use_requests = true
+use_httpx = true
+use_aiohttp = true
+
+[synchronicity]
+run_sync = true
+run_async = true
+
+[asynchronous.task_factory]
+not_eager = true
+eager = true
+
+[asynchronous.task_execution]
+as_completed = true
+gather = true
+task_group = true
+
+# design
+order = "random" # random, ascending, or descending
+permutations = false
+combinations = false
+
+# timing
+inter_call_delay = 0
+inter_trial_delay = 60
+inter_run_delay = 0
+inter_experiment_delay = 0
+
+# repetition
+trial_runs = 5 # how many times to run each trial (each kind of call) per experiment
+experiment_runs = 5 # how many times to run the overarching experiment
+
+# concurrency (streams and sempahores)
+concurrent_max = 0 # might remove since this is a superset of the proceeding specifications
+asynchronous_max = 0
+thread_max = 0
+process_max = 0
+
+# network
+log_network = true
+
+[experiment.size]
+# results_per_call_min =
+# results_per_call_max =
+incrementing_form = "summative" # summative, multiplicative, exponential, logarithmic
+incrementing_factor = 2
+
+[experiment.volume]
+# results_per_call_min =
+# results_per_call_max =
+incrementing_form = "summative" # summative, multiplicative, exponential, logarithmic
+incrementing_factor = 2
+
+# [api]
+# # addresses & endpoints
+# server = ""
+# desired_endpoint = ""
+# endpoint_extension = ""
+
+# [api.credentials]
+# username = ""
+# password = ""
+
+# [api.limits]
+# volume_per_period = 0
+# period = 0 # in seconds
+
+# [api.settings]
+# seed = 0 # optional argument to ensure all API calls are the same in all aspect—otherwise response will be random

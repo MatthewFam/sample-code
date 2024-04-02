@@ -1,0 +1,461 @@
+Data wrangling of social network data (view at matthewfam.com/code/Comparing-Online-and-In-Person-Centrality).
+Written 2019-21.
+---
+title: Comparing Centrality and Behavior in Online vs. In-Person Social Networks—Data
+  Prep
+output:
+  html_document:
+    df_print: paged
+    self_contained: false
+---
+The following code, written by Matthew Fam, is a manipulation performed on a SocioPatterns dataset. The following data preparation provided the foundation for a study comparing online and in-person networks as well as individuals' centralities and behaviors therein.
+
+```{r echo=FALSE}
+knitr::opts_chunk$set(collapse=FALSE, echo=TRUE, eval = FALSE)
+```
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(network)
+library(sna)
+library(igraph)
+library(intergraph)
+library(entropy)
+library(tidyr)
+```
+
+## Study Participant Metadata Preparation
+```{r}
+# import participant metadata
+meta <- read.csv("~/path/to/Raw SocioPatterns Data/metadata_2013.txt", header = F)
+
+# properly format data and separate into columns
+meta <- as.character(meta$V1)
+meta <- unlist(strsplit(meta, c("\\s+")))
+meta <- meta[!meta == ""] # Remove empty values
+meta <- data.frame(matrix(meta, ncol = 3, byrow = T))
+colnames(meta) <- c("id", "class", "gender")
+meta$id <- as.numeric(as.character(meta$id))
+
+# extract class information and calculate additional class size/gender composition 
+class_size <- as.data.frame(table(meta$class, meta$gender))
+colnames(class_size) <- c("class", "gender", "frequency")
+class_data <- class_size
+class_num_F <- filter(class_size, gender == "F")
+class_num_M <- filter(class_size, gender == "M")
+class_num_Unknown <- filter(class_size, gender == "Unknown")
+class_size <- as.data.frame(table(meta$class))
+colnames(class_size) <- c("class", "class_size")
+class_size$class_num_F <- class_num_F$frequency
+class_size$class_num_M <- class_num_M$frequency
+class_size$class_num_Unknown <- class_num_Unknown$frequency
+
+# insert additional info about participant's class within main data set
+dta <- merge(meta, class_size, by = "class")
+cols <- c("class_size", "class_num_F", "class_num_M", "class_num_Unknown")
+dta[cols] <- lapply(dta[cols], factor) # make these new calculated numbers into factors so they are more easily used in analysis
+dta <- dta[, c(2:3,1,4:7)]
+```
+
+## Facebook Network Data Preparation
+```{r}
+# import facebook network data
+fbnet <- read.csv("~/path/to/Raw SocioPatterns Data/Facebook-known-pairs_data_2013.csv", header = F)
+colnames(fbnet) <- c("id1", "id2", "friend_status")
+
+# filter only for friendship connections (remove columns denoting lack of friendship)
+fbnet <- subset(fbnet[,c(1,2)], fbnet$friend_status == 1)
+
+# calculate and insert centrality measures
+g <- graph_from_data_frame(d = fbnet, directed = F)
+fbids <- as.data.frame(unique(unlist(fbnet[,1:2])))
+fbids$fb_deg <- degree(g)
+fbids$fb_bet <- betweenness(g)
+fbids$fb_cls <- closeness(g)
+fbids[5] <- as.data.frame(eigen_centrality(g)[[1]])
+fbids[6] <- as.data.frame(page_rank(g)[[1]])
+colnames(fbids) <- c("id", "fb_deg", "fb_bet", "fb_cls", "fb_egn", "fb_pgrnk")
+
+# calculate number of friends
+fbnetrev <- fbnet[,c(2,1)]
+colnames(fbnetrev) <- c("id1", "id2")
+fbids2 <- rbind(fbnet, fbnetrev) # adds a repeat for each interaction, where id1 and id2 are switched such that filtering for one person's interactions can be done using id1 regardless of subject
+fbids2 <- merge(fbids2, meta[, c(1,3)], by.x = "id2", by.y = "id")
+fbids2 <- fbids2[, c(2,1,3)]
+colnames(fbids2) <- c("id1", "id2", "id2.gender")
+num_fb_friends <- as.data.frame(table(fbids2$id1))
+colnames(num_fb_friends) <- c("id", "num_fb_friends")
+
+# calculate gender ratio of friends
+num_fb_friends_by_gender <- as.data.frame(table(fbids2$id1, fbids2$id2.gender))
+colnames(num_fb_friends_by_gender) <- c("id", "gender_of_friends", "num_fb_friends")
+num_M_fb_friends <- filter(num_fb_friends_by_gender, gender_of_friends == "M")
+num_F_fb_friends <- filter(num_fb_friends_by_gender, gender_of_friends == "F")
+num_Unknown_fb_friends <- filter(num_fb_friends_by_gender, gender_of_friends == "Unknown")
+num_fb_friends$num_M_fb_friends <- num_M_fb_friends$num_fb_friends
+num_fb_friends$num_F_fb_friends <- num_F_fb_friends$num_fb_friends
+num_fb_friends$num_Unknown_fb_friends <- num_Unknown_fb_friends$num_fb_friends
+num_fb_friends$gender_ratio_fb <- as.numeric(abs(num_fb_friends$num_M_fb_friends/num_fb_friends$num_fb_friends - .5))
+
+# merge facebook data and calculated values
+fbids <- merge(fbids, num_fb_friends, by = "id")
+
+# merge facebook data with master dataset
+fulldta <- merge(dta, fbids, by = "id", all = T) # fulldta adds NA where there is missing data due to a subject missing from one of the data frames
+dta <- merge(dta, fbids, by = "id") # dta keeps only the ids which are present in each of the joined data frames
+```
+
+## Friendship Network Data Preparation
+```{r}
+# import friendship network data
+frnnet <- read.csv("~/path/to/Raw SocioPatterns Data/Friendship-network_data_2013.csv", header = F)
+colnames(frnnet) <- c("id1", "id2")
+
+# calculate and insert centrality measures
+g <- graph_from_data_frame(d = frnnet, directed = T)
+frnids <- as.data.frame(unique(unlist(frnnet[,1:2])))
+frnids$frn_deg <- degree(g)
+frnids$frn_bet <- betweenness(g)
+frnids$frn_in_cls <- closeness(g, mode = "in")
+frnids$frn_out_cls <- closeness(g, mode = "out")
+frnids[6] <- as.data.frame(eigen_centrality(g)[[1]])
+frnids[7] <- as.data.frame(page_rank(g)[[1]])
+colnames(frnids) <- c("id", "frn_deg", "frn_bet", "frn_in_cls", "frn_out_cls", "frn_egn", "frn_pgrnk")
+
+# determine number of friends and reciprocality thereof
+num_friends_reported <- as.data.frame(table(factor(frnnet$id1, levels=unique(unlist(frnnet[,1:2])))))
+colnames(num_friends_reported) <- c("id", "num_friends_reported")
+frnids <- merge(frnids, num_friends_reported, by = "id")
+
+num_others_reporting_subject_as_friend <- as.data.frame(table(factor(frnnet$id2, levels=unique(unlist(frnnet[,1:2])))))
+colnames(num_others_reporting_subject_as_friend) <- c("id", "num_others_reporting_subject_as_friend")
+frnids <- merge(frnids, num_others_reporting_subject_as_friend, by = "id")
+
+mutual_status <- as.data.frame(which_mutual(g))
+mutual_status <- cbind(frnnet, mutual_status)
+mutual_friendships <- as.data.frame(table(factor(mutual_status$id1,levels=unique(unlist(frnnet[,1:2]))),mutual_status$`which_mutual(g)`, exclude = "FALSE"))
+colnames(mutual_friendships) <- c("id", "mutual_status", "mutual_friendships")
+frnids <- merge(frnids, mutual_friendships[,c(1,3)], by = "id")
+
+unreciprocated_friendships_reported_by_subject <- as.data.frame(table(factor(mutual_status$id1,levels=unique(unlist(frnnet[,1:2]))),mutual_status$`which_mutual(g)`, exclude = "TRUE"))
+colnames(unreciprocated_friendships_reported_by_subject) <- c("id", "mutual_status", "unreciprocated_friendships_(reported_by_subject)")
+frnids <- merge(frnids, unreciprocated_friendships_reported_by_subject[,c(1,3)], by = "id")
+
+unreciprocated_friendships_reported_by_others <-
+as.data.frame(table(factor(mutual_status$id2,levels=unique(unlist(frnnet[,1:2]))),mutual_status$`which_mutual(g)`, exclude = "TRUE"))
+colnames(unreciprocated_friendships_reported_by_others) <- c("id", "mutual_status", "unreciprocated_friendships_(reported_by_others)")
+frnids <- merge(frnids, unreciprocated_friendships_reported_by_others[,c(1,3)], by = "id")
+
+frnids$`total_num_friends_(frnnet)` <- frnids$mutual_friendships + frnids$`unreciprocated_friendships_(reported_by_others)` + frnids$`unreciprocated_friendships_(reported_by_subject)`
+frnids <- frnids[,c(1:7,13,8:12)]
+
+# determine gender ratio of interactions
+frnnetrev <- frnnet[,c(2,1)]
+colnames(frnnetrev) <- c("id1", "id2")
+frnids2 <- rbind(frnnet, frnnetrev) # adds a repeat for each interaction, where id1 and id2 are switched such that filtering for one person's interactions can be done using id1 regardless of subject
+frnids2 <- paste(frnids2$id1, frnids2$id2, sep =" ")
+frnids2 <- as.data.frame(unique(frnids2))
+colnames(frnids2) <- c("toparse")
+frnids2 <- separate(frnids2, toparse, into = c("id1", "id2"), sep = " (?=[^ ]+$)")
+frnids2$id1 <- as.numeric(frnids2$id1)
+frnids2$id2 <- as.numeric(frnids2$id2)
+frnids2 <- merge(frnids2, meta[, c(1,3)], by.x = "id2", by.y = "id")
+frnids2 <- frnids2[, c(2,1,3)]
+colnames(frnids2) <- c("id1", "id2", "id2.gender")
+num_friends_by_gender_frn <- as.data.frame(table(frnids2$id1, frnids2$id2.gender))
+colnames(num_friends_by_gender_frn) <- c("id", "gender_of_friends", "num_friends_frn")
+num_M_friends_frn <- filter(num_friends_by_gender_frn, gender_of_friends == "M")
+num_F_friends_frn <- filter(num_friends_by_gender_frn, gender_of_friends == "F")
+num_Unknown_friends_frn <- filter(num_friends_by_gender_frn, gender_of_friends == "Unknown")
+num_friends_by_gender_frn <- num_M_friends_frn[,c(1,3)]
+colnames(num_friends_by_gender_frn) <- c("id", "num_M_friends_frn")
+num_friends_by_gender_frn$num_F_friends_frn <- num_F_friends_frn[,3]
+num_friends_by_gender_frn$num_Unknown_friends_frn <- num_Unknown_friends_frn[,3]
+frnids <- merge(frnids, num_friends_by_gender_frn, by = "id")
+
+frnids$gender_ratio_frn <- as.numeric(abs(frnids$num_M_friends_frn/frnids$`total_num_friends_(frnnet)` - .5))
+
+# calculate average friends' centralities in the process and insert friend centralities
+frnids2 <- merge(frnids2[,c(1:2)], frnids[,c(1,5)], by.x = "id2", by.y = "id")
+frnids2 <- frnids2[,c(2,1,3)]
+frnids2 <- aggregate(frnids2$frn_out_cls, by = list(id=frnids2$id1), FUN = mean)
+colnames(frnids2) <- c("id", "friend_cent")
+frnids <- merge(frnids, frnids2, by = "id")
+
+# merge facebook data with master dataset
+fulldta <- merge(fulldta, frnids, by = "id", all = T)
+dta <- merge(dta, frnids, by = "id")
+```
+
+## Interaction Network Data Preparation
+```{r}
+# import interaction network data
+intnet <- read.csv("~/path/to/Raw SocioPatterns Data/High-School_data_2013.csv", header = F)
+
+intnet <- intnet[, c(2:3,1)]
+colnames(intnet) <- c("id1", "id2", "time")
+
+# add weights to network (although many functions can derive weight from quantity of repetitions)
+intnetweighted <- paste(intnet$id1, intnet$id2, sep =" ")
+intnetweighted <- as.data.frame(table(intnetweighted))
+colnames(intnetweighted) <- c("toparse", "weight")
+intnetweighted <- separate(intnetweighted, toparse, into = c("id1", "id2"), sep = " (?=[^ ]+$)")
+
+# remove weights from network
+intnetun <- intnetweighted[,c(1:2)]
+
+# calculate and insert centrality measures
+g <- graph_from_data_frame(d = intnet, directed = F) # use unweighted network for centrality calculations
+intids <- as.data.frame(unique(unlist(intnet[,1:2])))
+intids$int_deg <- degree(g)
+intids$int_bet <- betweenness(g)
+intids$int_cls <- closeness(g)
+intids[5] <- as.data.frame(eigen_centrality(g)[[1]])
+intids[6] <- as.data.frame(page_rank(g)[[1]])
+colnames(intids) <- c("id", "int_deg", "int_bet", "int_cls", "int_egn", "int_pgrnk")
+
+# determine interactions
+intnetrev <- intnet[,c(2,1,3)]
+colnames(intnetrev) <- c("id1", "id2", "time")
+ints <- rbind(intnet,intnetrev) # adds a repeat for each interaction, where id1 and id2 are switched such that filtering for one person's interactions can be done using id1 regardless of subject
+ints <- as.data.frame(table(ints$id1))
+colnames(ints) <- c("id", "ints")
+intids <- merge(intids, ints, by = "id")
+
+# calculate interaction time
+inttime <- rbind(intnet, intnetrev)
+inttime$comboid <- paste(inttime$id1, inttime$time, sep =" ")
+inttime <- as.data.frame(unique(inttime$comboid))
+colnames(inttime) <- c("toparse")
+inttime <- separate(inttime, toparse, into = c("id", "time_stamp"), sep = " (?=[^ ]+$)")
+inttime <- as.data.frame(table(inttime$id))
+colnames(inttime) <- c("id", "int_time")
+intids <- merge(intids, inttime, by = "id")
+
+# calculate group interactions
+inttime <- rbind(intnet, intnetrev)
+inttime <- as.data.frame(table(inttime$id1, inttime$time))
+inttime <- filter(inttime, inttime$Freq > 1)
+inttime <- as.data.frame(table(inttime$Var1))
+colnames(inttime) <- c("id", "group_ints")
+intids <- merge(intids, inttime, by = "id")
+
+# determine conversation partners
+inttime <- rbind(intnet, intnetrev)
+inttime <- as.data.frame(table(inttime$id1, inttime$id2))
+inttime <- filter(inttime, inttime$Freq > 0)
+inttime <- as.data.frame(table(inttime$Var1))
+colnames(inttime) <- c("id", "conv_partners")
+intids <- merge(intids, inttime, by = "id")
+
+# calculate entropy
+g <- graph_from_data_frame(d = intnet, directed = F)
+
+intadjmat <- as_adj(g)
+entropy_vector <- c(1:nrow(intadjmat))
+for (row in c(1:nrow(intadjmat))) {
+  entropy_vector[row] <- entropy(intadjmat[row,])
+}
+entropy_vector <- as.data.frame(entropy_vector)
+colnames(entropy_vector) <- c("social_ent")
+intids <- cbind(intids, entropy_vector)
+
+# calculate interaction gender ratio
+inttime <- rbind(intnet, intnetrev)
+inttime <- merge(inttime, meta[,c(1,3)], by.x = "id2", by.y = "id")
+inttime <- inttime[,c(2,1,4,3)]
+colnames(inttime) <- c("id1", "id2", "gender.id2", "time")
+inttime <- as.data.frame(table(inttime$id1, inttime$gender.id2))
+colnames(inttime) <- c("id", "gender_int", "time")
+M_ints <- filter(inttime, gender_int == "M")
+F_ints <- filter(inttime, gender_int == "F")
+Unknown_ints <- filter(inttime, gender_int == "Unknown")
+ints_by_gender <- M_ints[,c(1,3)]
+colnames(ints_by_gender) <- c("id", "M_ints")
+ints_by_gender$F_ints <- F_ints[,3]
+ints_by_gender$Unknown_ints <- Unknown_ints[,3]
+intids <- merge(intids, ints_by_gender, by = "id")
+
+intids$gender_ratio_ints <- as.numeric(abs(intids$M_ints/intids$ints-.5))
+
+# merge interaction data with master dataset
+fulldta <- merge(fulldta, intids, by = "id", all = T)
+dta <- merge(dta, intids, by = "id")
+```
+
+# Friendship Network ✕ Interaction Network Cross-Calculations Data Preparation
+```{r}
+# calculate interaction centrality
+intids2 <- rbind(intnet, intnetrev)
+intids2 <- merge(intids2, frnids[,c(1,5)], by.x = "id2", by.y = "id")
+intids2 <- intids2[,c(2,1,3:4)]
+intids2 <- aggregate(intids2$frn_out_cls, by = list(id=intids2$id1), FUN = mean)
+colnames(intids2) <- c("id", "int_cent")
+intids <- merge(intids, intids2, by = "id")
+fulldta <- merge(fulldta, intids2, by = "id", all = T)
+dta <- merge(dta, intids2, by = "id")
+
+# calculate difference between friend centrality and interaction centrality (to see if a person socializes "up" the social ladder or not)
+dta$friend_int_cent_diff <- dta$int_cent - dta$friend_cent
+fulldta$friend_int_cent_diff <- fulldta$int_cent - fulldta$friend_cent
+
+# calculate friend interactions
+frnnet2 <- rbind(frnnet, frnnetrev) #switching ids 1 and 2 and adding them below to filter for data for each subject using jsut one row
+frnnet2 <- paste(frnnet2$id1, frnnet2$id2, sep =" ")
+frnnet2 <- as.data.frame(unique(frnnet2))
+intnet2 <- rbind(intnet, intnetrev)
+intnet2$comboid <- paste(intnet$id1, intnet$id2, sep =" ")
+intnet2$friends <- intnet2$comboid %in% frnnet2$`unique(frnnet2)`
+intnet2 <- filter(intnet2, intnet2$friends == "TRUE")
+intnet2 <- as.data.frame(table(intnet2$id1))
+colnames(intnet2) <- c("id", "friend_ints")
+fulldta <- merge(fulldta, intnet2, by = "id", all = T)
+dta <- merge(dta, intnet2, by = "id")
+
+# calculate average path legnth
+g <- graph_from_data_frame(d = frnnet, directed = T)
+g <- as.undirected(g, "collapse")
+N <- gorder(g)-1
+g2 <- graph_from_data_frame(d = intnetun, directed = F)
+g2 <- as_adj(g2)
+g2 <- as.matrix(g2)
+g2 <- subset(g2, rownames(g2) %in% frnids$id)
+g2 <- t(g2)
+g2 <- subset(g2, rownames(g2) %in% frnids$id)
+avg_path_length <- lapply(V(g),
+                          function(v){
+                            q <-   shortest.paths(g, v)
+                            d <- diameter(g, directed = F, unconnected = T) + 1
+                            q[q == Inf] <- d
+                            q <- q %*% g2
+                            q
+                            rowSums(q)/N
+                            })
+avg_path_length <- as.data.frame(do.call(rbind, avg_path_length))
+avg_path_length$id <- rownames(avg_path_length)
+avg_path_length <- avg_path_length[,c(2,1)]
+colnames(avg_path_length) <- c("id", "avg_path_length_(int_unweighted)")
+g2 <- graph_from_data_frame(d = intnet, directed = F)
+g2 <- as_adj(g2)
+g2 <- as.matrix(g2)
+g2 <- subset(g2, rownames(g2) %in% frnids$id)
+g2 <- t(g2)
+g2 <- subset(g2, rownames(g2) %in% frnids$id)
+avg_path_length_weighted <- lapply(V(g),
+                          function(v){
+                            q <-   shortest.paths(g, v)
+                            d <- diameter(g, directed = F, unconnected = T) + 1
+                            q[q == Inf] <- d
+                            q <- q %*% g2
+                            q
+                            rowSums(q)/N
+                            })
+avg_path_length_weighted <- as.data.frame(do.call(rbind, avg_path_length_weighted))
+avg_path_length_weighted$id <- rownames(avg_path_length_weighted)
+avg_path_length_weighted <- avg_path_length_weighted[,c(2,1)]
+colnames(avg_path_length_weighted) <- c("id", "avg_path_length_(int_weigthed)")
+avg_path_length <- merge(avg_path_length, avg_path_length_weighted, by= "id")
+avg_path_length$id <- as.numeric(avg_path_length$id)
+avg_path_length$`avg_path_length_(int_weigthed)` <- as.numeric(avg_path_length$`avg_path_length_(int_weigthed)`)
+
+# merge friendship ✕ interaction data with master dataset
+fulldta <- merge(fulldta, avg_path_length, by = "id", all = T)
+dta <- merge(dta, avg_path_length, by = "id")
+```
+
+# Colocation Network Data Preparation
+```{r}
+# import colocation network data
+colnet <- read.csv("~/path/to/Raw SocioPatterns Data/colocation_HS_Data.csv", header = F)
+
+# calculate and insert centrality measures
+colnet <- colnet[,c(2:3,1)]
+colnames(colnet) <- c("id1", "id2", "time")
+
+# calculate and insert weights to network
+colnetweighted <- paste(colnet$id1, colnet$id2, sep =" ")
+colnetweighted <- as.data.frame(table(colnetweighted))
+colnames(colnetweighted) <- c("toparse", "weight")
+colnetweighted <- separate(colnetweighted, toparse, into = c("id1", "id2"), sep = " (?=[^ ]+$)")
+
+g <- graph_from_data_frame(d = colnet, directed = F)
+colids <- as.data.frame(unique(unlist(colnet[,1:2])))
+colids$cln_deg <- degree(g)
+colids$cln_bet <- betweenness(g)
+colids$cln_cls <- closeness(g)
+colids[5] <- as.data.frame(eigen_centrality(g)[[1]])
+colids[6] <- as.data.frame(page_rank(g)[[1]])
+colnames(colids) <- c("id", "cln_deg", "cln_bet", "cln_cls", "cln_egn", "cln_pgrnk")
+
+#determine colocations
+  #organize colocation data to separate ids and specific colocations
+colnet$colid <- paste(colnet[,1], colnet[,2])
+colctns <- as.data.frame(table(colnet$colid))
+colctns2 <- as.character(colctns$Var1)
+colctns2 <- unlist(strsplit(colctns2, c("\\s+")))
+colctns2 <- colctns2[!colctns2 == ""] # Remove empty values
+colctns2 <- data.frame(matrix(colctns2, ncol = 2, byrow = T))
+colnames(colctns2) <- c("id1", "id2")
+colctns2$id1 <- as.numeric(as.character(colctns2$id1))
+colctns2$id2 <- as.numeric(as.character(colctns2$id2))
+colctns <- cbind(colctns2, colctns)
+colnames(colctns) <- c("id1", "id2", "comboid", "coloctn_freq(1=20s)")
+  # calculate number of people colocated with, regardless of amount of time spent colocating
+colctnsrev <- colctns[,c(2,1,3:4)]
+colnames(colctnsrev) <- c("id1", "id2", "comboid", "coloctn_freq(1=20s)")
+colctns <- rbind(colctns, colctnsrev) #swithcing id 1 and 2 to filter for each unique id using one column
+colctnssum <- as.data.frame(table(factor(colctns$id1, levels = unique(unlist(colnet[,1:2])))))
+colnames(colctnssum) <- c("id", "colocations_(total_subjects_colocated_with)")
+  # calculate total number of recorded colocation data points 
+totcolsum <- aggregate(colctns$`coloctn_freq(1=20s)`, by = list(id=colctns$id1), FUN = sum)
+colnames(totcolsum) <- c("id", "total_colocations_(num_colocation_entries)")
+  # merge colocations and total colocations data to other colocation data
+colids <- merge(colids, colctnssum, by= "id")
+colids <- merge(colids, totcolsum, by= "id")
+
+#determine colocation time
+colnetrev <- colnet[,c(2,1,3,4)]
+colnames(colnetrev) <- c("id1", "id2", "time", "colid")
+coltime <- rbind(colnet, colnetrev)
+coltime$coltimeid <- paste(coltime$id1, coltime$time)
+coltime <- as.data.frame(unique(coltime$coltimeid))
+colnames(coltime) <- c("toparse")
+coltime <- separate(coltime, toparse, into = c("id", "time"), sep = " (?=[^ ]+$)")
+coltime <- as.data.frame(table(coltime$id))
+colnames(coltime) <- c("id", "total_time_spent_colocating")
+colids <- merge(colids, coltime, by = "id")
+
+# determine colocation entropy
+g <- graph_from_data_frame(d = colnet, directed = F)
+coladjmat <- as_adj(g)
+entropy_vector <- c(1:nrow(coladjmat))
+for (row in c(1:nrow(coladjmat))) {
+  entropy_vector[row] <- entropy(coladjmat[row,])
+}
+entropy_vector <- as.data.frame(entropy_vector)
+colnames(entropy_vector) <- c("colocation_ent")
+colids <- cbind(colids, entropy_vector)
+
+# merge colocation data with master dataset
+fulldta <- merge(fulldta, colids, by = "id", all = T)
+dta <- merge(dta, colids, by = "id")
+```
+
+## Limited Class Metadata (only participants present in all networks)
+```{r}
+meta <- dta[,c(1:3)]
+
+# extract and insert info about participant's class
+class_size <- as.data.frame(table(meta$class, meta$gender))
+colnames(class_size) <- c("class", "gender", "frequency_(filtered_data)")
+class_data <- merge(class_data, class_size, by = c("class", "gender"), all=TRUE)
+```
+
+## Prepared Data Export
+```{r}
+# write data to csv files
+write.csv(x = dta, file ="~/path/to/prepped_data/Data.csv", row.names = FALSE)
+write.csv(x = fulldta, file ="~/path/to/prepped_data/FullData.csv", row.names = FALSE)
+write.csv(x = class_data, file = "~/path/to/prepped_data/ClassData.csv", row.names = FALSE)
+```
+<br>
+<br>
