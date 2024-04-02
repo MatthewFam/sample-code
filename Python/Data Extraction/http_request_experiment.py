@@ -38,10 +38,10 @@ import aiohttp # asynchronous HTTP requests
 
 
 # DIRECTORIES
-# root_dir = os.path.join(os.path.dirname(__file__), os.pardir, os.pardir)
-# src_dir = os.path.join(os.path.dirname(__file__), os.pardir)
-pkg_dir = os.path.join(os.path.dirname(__file__))
-config_path = os.path.join(pkg_dir, "config.toml")
+# ROOT_DIR = os.path.join(os.path.dirname(__file__), os.pardir, os.pardir)
+# SRC_DIR = os.path.join(os.path.dirname(__file__), os.pardir)
+PKG_DIR = os.path.join(os.path.dirname(__file__))
+CONFIG_PATH = os.path.join(PKG_DIR, "config.toml")
 
 # CONFIGURATION
 def load_global_config() -> dict:
@@ -52,7 +52,7 @@ def load_global_config() -> dict:
     dict
         Configuration dictionary.
     """
-    with open(config_path, 'r') as f:
+    with open(CONFIG_PATH, 'r') as f:
         return toml.load(f)
  
  
@@ -74,7 +74,7 @@ def update_global_config(config: dict) -> None:
     well as those meant to be modified.
     """
     # Write modified config back to the file
-    with open(config_path, 'w') as f:
+    with open(CONFIG_PATH, 'w') as f:
         toml.dump(config, f)
 
 # DECORATORS
@@ -531,64 +531,64 @@ def main() -> None:
     config = load_global_config()
 
     # configure HTTP request packages
-    use_requests = config['package']['use_requests']
-    use_httpx = config['package']['use_httpx']
-    use_aiohttp = config['package']['use_aiohttp']
+    USE_REQUESTS = config['package']['use_requests']
+    USE_HTTPX = config['package']['use_httpx']
+    USE_AIOHTTP = config['package']['use_aiohttp']
 
     # configure synchronicity
-    run_sync = config['synchronicity']['run_sync']
-    run_async = config['synchronicity']['run_async']
+    RUN_SYNC = config['synchronicity']['run_sync']
+    RUN_ASYNC = config['synchronicity']['run_async']
 
     # configure task factory
-    task_factory = config['asynchronous']['task_factory']
+    TASK_FACTORY = config['asynchronous']['task_factory']
 
     # configure task execution
-    task_execution = config['asynchronous']['task_execution']
+    TASK_EXECUTION = config['asynchronous']['task_execution']
 
     # configure experiment repetition
-    run_freq = 1000
+    RUN_FREQ = 1000
 
-    # test_url = "https://httpstat.us/200"
-    test_url = "https://fakerapi.it/api/v1/books?_quantity=1"
+    # TEST_URL = "https://httpstat.us/200"
+    TEST_URL = "https://fakerapi.it/api/v1/books?_quantity=1"
 
     # ITERATE THROUGH RUNS
 
     buffer = time.sleep(60) # cool-off to prevent rate-limits from executing runs one after the other
 
     runs = []
-    if use_requests:
+    if USE_REQUESTS:
         runs.append(RequestsRun())
-    if use_httpx:
+    if USE_HTTPX:
         runs.append(HttpxRun())
-    if use_aiohttp:
+    if USE_AIOHTTP:
         runs.append(AiohttpRun())
 
     for run in runs:
-        if run_sync and any("_sync" in func_name for func_name in dir(run)):
-            run.get_single_sync(test_url)
+        if RUN_SYNC and any("_sync" in func_name for func_name in dir(run)):
+            run.get_single_sync(TEST_URL)
             buffer
-            run.get_many_sync([test_url] * run_freq)           
+            run.get_many_sync([TEST_URL] * RUN_FREQ)           
         
-        if run_async and any("async" in func_name for func_name in dir(run)):
-            for factory, use in task_factory.items():
+        if RUN_ASYNC and any("async" in func_name for func_name in dir(run)):
+            for factory, use in TASK_FACTORY.items():
                 eager = False
                 if factory == "eager" and use:
                     eager = True
                 print(f"{factory} {use!s:-<60}")
                 buffer
-                if task_execution['as_completed']:
+                if TASK_EXECUTION['as_completed']:
                     asyncio.run(
-                        run.get_many_async_as_completed([test_url] * run_freq, eager)
+                        run.get_many_async_as_completed([TEST_URL] * RUN_FREQ, eager)
                     )
                 buffer
-                if task_execution['gather']:
+                if TASK_EXECUTION['gather']:
                     asyncio.run(
-                        run.get_many_async_gather([test_url] * run_freq, eager)
+                        run.get_many_async_gather([TEST_URL] * RUN_FREQ, eager)
                     )
                 buffer
-                if task_execution['task_group']:
+                if TASK_EXECUTION['task_group']:
                     asyncio.run(
-                        run.get_many_async_taskgroup([test_url] * run_freq, eager)
+                        run.get_many_async_taskgroup([TEST_URL] * RUN_FREQ, eager)
                     )
 
 # RUN
