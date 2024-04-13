@@ -201,27 +201,6 @@ class Run:
         self.period_limit = period_limit
         self.concur_limit = concur_limit
         self.sem = asyncio.Semaphore(concur_limit) if concur_limit else None
-
-    @property
-    def endpoints(host: str, base_path: str, endpoint_path: str) -> Generator[any, any, any]:
-        """
-        Generate full urls/endpoints to access API resources.
-
-        Parameters
-        ----------
-        host : str
-            Host or server url.
-        base_path : str
-            Base url extension to access API service.
-        endpoint_path : str
-            Endpoint extension pointing to specific API resource(s).
-        
-        Yields
-        ------
-        generator
-            URLs to call desired resource(s)/service(s).
-        """
-        raise NotImplementedError("Placeholder for future implementation.")
     
     def auth(self, method: Optional[str] = Optional[str]) -> None:
         """
