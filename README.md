@@ -20,4 +20,4 @@ Though much of my latest (and best) work happens to be proprietary, I am working
 
 Where is the license?
 ==
-This code is intentionally uploaded without a license, meaning that default copyright laws apply. The author, Matthew Fam, retains all rights to the source code and no one may reproduce, distribute, or create derivative works from the included work without explicit consent. For permission to use the code, please reach out to the owner at <contact@matthewfam.com>.
+This code is intentionally uploaded without a license, meaning that default copyright laws apply. The author, Matthew Fam, retains all rights to the source code and no one may reproduce, distribute, or create derivative works from the included work without explicit, written consent. For permission to use the code, please reach out to the owner at <contact@matthewfam.com>.
